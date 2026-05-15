@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# SQLite database (local data — don't commit)
+*.db
+*.db-journal
+
+# Node
+node_modules/
+dist/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Brainstorm scratch files
+.superpowers/
