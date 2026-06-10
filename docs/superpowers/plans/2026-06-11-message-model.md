@@ -390,7 +390,7 @@ Create `backend/app/models.py`:
 ```python
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Index, String
+from sqlalchemy import CheckConstraint, DateTime, Float, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -418,6 +418,10 @@ class Message(Base):
     )
 
     __table_args__ = (
+        CheckConstraint(
+            "status IN ('in_flight', 'delivered', 'lost')",
+            name="ck_messages_status",
+        ),
         Index("ix_messages_status_arrival_at", "status", "arrival_at"),
         Index("ix_messages_recipient_status", "recipient", "status"),
     )
@@ -467,7 +471,7 @@ def client(test_engine):
         bind=test_engine, autoflush=False, expire_on_commit=False
     )
 
-    app = create_app(start_scheduler=False)
+    app = create_app(start_scheduler=False, create_tables=False)
 
     def override_get_db():
         db = TestingSession()
@@ -480,7 +484,7 @@ def client(test_engine):
     return TestClient(app)
 ```
 
-(The client is used without a `with` block, so the lifespan never runs in API tests — no `create_all` against the real `pigeon.db`, no scheduler. Tables come from the `test_engine` fixture.)
+(`create_tables=False` and `start_scheduler=False` keep the lifespan inert even if someone later wraps the client in a `with` block — nothing ever touches the real `pigeon.db`. Tables come from the `test_engine` fixture.)
 
 - [ ] **Step 2: Write the failing API tests**
 
@@ -536,6 +540,11 @@ def test_blank_sender_rejected(client):
     assert response.status_code == 422
 
 
+def test_blank_body_rejected(client):
+    response = send(client, body="   ")
+    assert response.status_code == 422
+
+
 def test_get_message_by_id(client):
     message_id = send(client).json()["id"]
     response = client.get(f"/messages/{message_id}")
@@ -567,6 +576,20 @@ def test_sender_tracking_shows_all_statuses_newest_first(client):
     second = send(client, body="second pigeon").json()["id"]
     tracking = client.get("/messages", params={"sender": "pratik"}).json()
     assert [m["id"] for m in tracking] == [second, first]
+
+
+def test_combined_sender_and_recipient_filters(client, db_session):
+    mine = send(client).json()["id"]                 # pratik -> alex, delivered below
+    other = send(client, sender="zoe").json()["id"]  # zoe -> alex, delivered below
+    send(client, body="still flying")                # pratik -> alex, stays in flight
+    for message_id in (mine, other):
+        db_session.get(Message, message_id).status = DELIVERED
+    db_session.commit()
+
+    result = client.get(
+        "/messages", params={"sender": "pratik", "recipient": "alex"}
+    ).json()
+    assert [m["id"] for m in result] == [mine]
 ```
 
 - [ ] **Step 3: Run tests to verify they fail**
@@ -593,9 +616,9 @@ class MessageCreate(BaseModel):
     origin: str
     destination: str
 
-    @field_validator("sender", "recipient")
+    @field_validator("sender", "recipient", "body")
     @classmethod
-    def handle_not_blank(cls, value: str) -> str:
+    def not_blank(cls, value: str) -> str:
         value = value.strip()
         if not value:
             raise ValueError("must not be blank")
@@ -656,6 +679,11 @@ router = APIRouter(prefix="/messages", tags=["messages"])
 def send_message(payload: MessageCreate, db: Session = Depends(get_db)):
     distance_km = distance_between(payload.origin, payload.destination)
     sent_at = utcnow()
+    try:
+        arrival_at = sent_at + flight_duration(distance_km)
+    except ValueError as exc:
+        # Misconfigured FAST_FORWARD — fail clearly at send time, per spec.
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     message = models.Message(
         sender=payload.sender,
         recipient=payload.recipient,
@@ -665,7 +693,7 @@ def send_message(payload: MessageCreate, db: Session = Depends(get_db)):
         distance_km=distance_km,
         status=models.IN_FLIGHT,
         sent_at=sent_at,
-        arrival_at=sent_at + flight_duration(distance_km),
+        arrival_at=arrival_at,
     )
     db.add(message)
     db.commit()
@@ -717,12 +745,13 @@ from app import db, models  # noqa: F401  — models registers tables on Base.me
 from app.routes import router
 
 
-def create_app(start_scheduler: bool = True) -> FastAPI:
-    # start_scheduler is wired up in the scheduler task; the flag exists now so
-    # tests can already opt out.
+def create_app(start_scheduler: bool = True, create_tables: bool = True) -> FastAPI:
+    # Both flags exist so tests can opt out: start_scheduler is wired up in the
+    # scheduler task; create_tables=False keeps test runs away from pigeon.db.
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        db.Base.metadata.create_all(bind=db.engine)
+        if create_tables:
+            db.Base.metadata.create_all(bind=db.engine)
         yield
 
     app = FastAPI(title="Pigeon Post API", lifespan=lifespan)
@@ -854,6 +883,7 @@ Append to `backend/app/delivery.py` (and add the imports at the top of the file)
 
 ```python
 # add to the imports at the top:
+import logging
 import random
 from collections.abc import Callable
 
@@ -861,6 +891,8 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models import DELIVERED, IN_FLIGHT, LOST, Message
+
+logger = logging.getLogger(__name__)
 ```
 
 ```python
@@ -885,14 +917,19 @@ def resolve_due_messages(
     ).all()
     resolved = 0
     for message_id, distance_km in due:
-        status = LOST if rng() < loss_probability(distance_km) else DELIVERED
-        result = session.execute(
-            update(Message)
-            .where(Message.id == message_id, Message.status == IN_FLIGHT)
-            .values(status=status, resolved_at=now)
-        )
-        session.commit()
-        resolved += result.rowcount
+        try:
+            status = LOST if rng() < loss_probability(distance_km) else DELIVERED
+            result = session.execute(
+                update(Message)
+                .where(Message.id == message_id, Message.status == IN_FLIGHT)
+                .values(status=status, resolved_at=now)
+            )
+            session.commit()
+            resolved += result.rowcount or 0
+        except Exception:
+            # One bad row must not poison the rest of the batch.
+            session.rollback()
+            logger.exception("failed to resolve message %s", message_id)
     return resolved
 ```
 
@@ -948,6 +985,7 @@ def test_lifespan_starts_and_stops_scheduler(tmp_path, monkeypatch):
         assert client.get("/health").status_code == 200
         assert app.state.scheduler.running is True
     assert app.state.scheduler.running is False
+    engine.dispose()
 
 
 def test_scheduler_not_started_when_disabled(tmp_path, monkeypatch):
@@ -960,6 +998,7 @@ def test_scheduler_not_started_when_disabled(tmp_path, monkeypatch):
     app = create_app(start_scheduler=False)
     with TestClient(app):
         assert getattr(app.state, "scheduler", None) is None
+    engine.dispose()
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -992,13 +1031,14 @@ def _run_sweep() -> None:
         session.close()
 
 
-def create_app(start_scheduler: bool = True) -> FastAPI:
+def create_app(start_scheduler: bool = True, create_tables: bool = True) -> FastAPI:
     # Single-process assumption: each worker would run its own scheduler, so
     # this app is dev-only until that's revisited. Scheduler starts in the
     # lifespan — never at import time.
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        db.Base.metadata.create_all(bind=db.engine)
+        if create_tables:
+            db.Base.metadata.create_all(bind=db.engine)
         scheduler = None
         if start_scheduler:
             scheduler = BackgroundScheduler()
@@ -1104,8 +1144,9 @@ In another shell:
 ```bash
 curl -s -X POST localhost:8000/messages -H 'content-type: application/json' \
   -d '{"sender":"pratik","recipient":"alex","body":"hello","origin":"new york","destination":"san francisco"}'
-# note the id and arrival_at (~37s away), then after ~45s:
-curl -s localhost:8000/messages/1
+# note the returned id and arrival_at (~37s away), then after ~45s
+# (replace <id> with the returned id):
+curl -s localhost:8000/messages/<id>
 # status should be "delivered" (or, ~6% of the time, "lost")
 curl -s 'localhost:8000/messages?recipient=alex'
 # delivered → shows the message; lost → empty list
