@@ -32,7 +32,8 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate
 
-pip install -r requirements.txt
+# requirements-dev.txt pulls in requirements.txt plus test tools (pytest, httpx)
+pip install -r requirements-dev.txt
 ```
 
 ### Running the backend
@@ -66,7 +67,8 @@ pigeon-post/
 ├── backend/                  Python FastAPI service
 │   ├── app/                  Application code
 │   ├── tests/                Pytest tests
-│   ├── requirements.txt
+│   ├── requirements.txt      Runtime dependencies
+│   ├── requirements-dev.txt  Dev/test dependencies (includes runtime)
 │   └── .python-version       pyenv-pinned Python version
 ├── frontend/                 React + Vite + TypeScript (Phase 1, later milestones)
 └── README.md
