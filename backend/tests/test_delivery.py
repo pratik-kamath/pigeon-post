@@ -28,7 +28,7 @@ def test_fast_forward_unset_means_real_time(monkeypatch):
     assert fast_forward_factor() == 1.0
 
 
-@pytest.mark.parametrize("bad", ["banana", "0", "-5"])
+@pytest.mark.parametrize("bad", ["banana", "0", "-5", "nan", "inf"])
 def test_invalid_fast_forward_fails_clearly(monkeypatch, bad):
     monkeypatch.setenv("FAST_FORWARD", bad)
     with pytest.raises(ValueError, match="FAST_FORWARD"):

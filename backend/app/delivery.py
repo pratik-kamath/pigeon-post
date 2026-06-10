@@ -1,3 +1,4 @@
+import math
 import os
 from datetime import UTC, datetime, timedelta
 
@@ -21,8 +22,8 @@ def fast_forward_factor() -> float:
         factor = float(raw)
     except ValueError:
         raise ValueError(f"FAST_FORWARD must be a number, got {raw!r}") from None
-    if factor <= 0:
-        raise ValueError(f"FAST_FORWARD must be > 0, got {factor}")
+    if not math.isfinite(factor) or factor <= 0:
+        raise ValueError(f"FAST_FORWARD must be a finite number > 0, got {factor}")
     return factor
 
 
