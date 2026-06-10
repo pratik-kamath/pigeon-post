@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -7,6 +9,8 @@ from app.cities import distance_between
 from app.db import get_db
 from app.delivery import flight_duration, utcnow
 from app.schemas import MessageCreate, MessageOut
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/messages", tags=["messages"])
 
@@ -19,6 +23,7 @@ def send_message(payload: MessageCreate, db: Session = Depends(get_db)):
         arrival_at = sent_at + flight_duration(distance_km)
     except ValueError as exc:
         # Misconfigured FAST_FORWARD — fail clearly at send time, per spec.
+        logger.error("rejecting send: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     message = models.Message(
         sender=payload.sender,

@@ -1,6 +1,6 @@
 # Pigeon Post
 
-A fun, learning-oriented messaging app where messages are carried by virtual pigeons. Each message takes real-world pigeon-flight time to arrive (NYC → SF takes about 49 hours at 80 km/h), and there's a small chance the pigeon never makes it.
+A fun, learning-oriented messaging app where messages are carried by virtual pigeons. Each message takes real-world pigeon-flight time to arrive (NYC → SF takes about 52 hours at 80 km/h), and there's a small chance the pigeon never makes it.
 
 This is a personal learning project — not production software. The codebase is being built in phases, one small milestone at a time.
 

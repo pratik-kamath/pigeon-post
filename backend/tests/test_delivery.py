@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -8,7 +8,9 @@ from app.delivery import (
     fast_forward_factor,
     flight_duration,
     loss_probability,
+    resolve_due_messages,
 )
+from app.models import DELIVERED, IN_FLIGHT, LOST, Message
 
 
 def test_flight_duration_at_pigeon_speed(monkeypatch):
@@ -48,12 +50,6 @@ def test_loss_probability_is_capped():
     assert loss_probability(50_000.0) == pytest.approx(MAX_LOSS_PROBABILITY)
 
 
-from datetime import datetime
-
-from app.delivery import loss_probability as _p
-from app.delivery import resolve_due_messages
-from app.models import DELIVERED, IN_FLIGHT, LOST, Message
-
 NOW = datetime(2026, 6, 11, 12, 0, 0)
 
 
@@ -92,7 +88,7 @@ def test_overdue_message_is_lost_when_roll_fails(db_session):
 
 def test_roll_exactly_at_probability_boundary_is_delivered(db_session):
     message = make_message(db_session, arrival_at=datetime(2026, 6, 11, 11, 0, 0))
-    boundary = _p(message.distance_km)
+    boundary = loss_probability(message.distance_km)
     resolve_due_messages(db_session, rng=lambda: boundary, now=NOW)
     db_session.refresh(message)
     assert message.status == DELIVERED  # lost only when rng() < p

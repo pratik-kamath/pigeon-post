@@ -1,6 +1,6 @@
 # Pigeon Post
 
-Fun-and-learn messaging app where messages travel at real pigeon flight speed. Personal learning project, built in small phased milestones (roadmap in README). Phase 1 in progress — only the backend skeleton exists so far.
+Fun-and-learn messaging app where messages travel at real pigeon flight speed. Personal learning project, built in small phased milestones (roadmap in README). Phase 1 in progress — the messaging core exists: message model, send/track/inbox endpoints, and the APScheduler delivery sweep. Auth and the frontend are still to come.
 
 ## Commands
 
@@ -28,5 +28,6 @@ uvicorn app.main:app --reload         # dev server :8000, docs at /docs
 
 ## Gotchas
 
-- Future rule: never start APScheduler at import time; wire it into the app lifespan inside `create_app()`.
-- README's `FAST_FORWARD` env var is a planned feature, not built yet.
+- Never start APScheduler at import time — it's wired into the app lifespan inside `create_app()` (tests pass `start_scheduler=False`).
+- `FAST_FORWARD` only affects newly sent messages: `arrival_at` is fixed at send time and the sweep never reads the env var.
+- The app is single-process/dev-only: multiple uvicorn workers would each run their own delivery scheduler.

@@ -56,8 +56,8 @@ backend/app/
   db.py        SQLite engine (./pigeon.db, gitignored), SessionLocal, Base, get_db
   models.py    Message
   schemas.py   MessageCreate (city/body/handle validation), MessageOut
-  cities.py    CITIES = {name: (lat, lon)} (~20 cities), haversine()
-  delivery.py  flight_time(), loss_probability(), resolve_due_messages()
+  cities.py    CITIES = {name: (lat, lon)} (~20 cities), haversine_km(), distance_between()
+  delivery.py  flight_duration(), loss_probability(), resolve_due_messages()
   routes.py    APIRouter for /messages endpoints
 ```
 

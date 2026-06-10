@@ -48,6 +48,6 @@ class MessageOut(BaseModel):
     destination: str
     distance_km: float
     status: str
-    sent_at: datetime
-    arrival_at: datetime
-    resolved_at: datetime | None
+    sent_at: datetime = Field(description="UTC")
+    arrival_at: datetime = Field(description="UTC")
+    resolved_at: datetime | None = Field(description="UTC")
