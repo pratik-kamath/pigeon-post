@@ -32,7 +32,7 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate
 
-# requirements-dev.txt pulls in requirements.txt plus test tools (pytest, httpx)
+# requirements-dev.txt pulls in requirements.txt plus test tools (pytest, httpx2)
 pip install -r requirements-dev.txt
 ```
 
@@ -46,7 +46,7 @@ uvicorn app.main:app --reload
 
 The API will be available at <http://localhost:8000>. Interactive docs at <http://localhost:8000/docs>.
 
-To test the delivery mechanic without waiting for realistic pigeon flight time, set the fast-forward env var:
+Later, once the delivery mechanic exists (a future Phase 1 milestone), the `FAST_FORWARD` env var will let you test scheduled delivery without waiting real pigeon-flight time:
 
 ```bash
 FAST_FORWARD=120 uvicorn app.main:app --reload  # 1 real hour = 30s of pigeon time
