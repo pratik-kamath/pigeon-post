@@ -2,7 +2,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.orm import sessionmaker as _sessionmaker
 
 from app import models  # noqa: F401  — registers tables on Base.metadata
 from app.db import Base, get_db
@@ -32,7 +31,7 @@ def db_session(test_engine):
 
 @pytest.fixture()
 def client(test_engine):
-    TestingSession = _sessionmaker(
+    TestingSession = sessionmaker(
         bind=test_engine, autoflush=False, expire_on_commit=False
     )
 
