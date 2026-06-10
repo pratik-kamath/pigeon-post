@@ -65,9 +65,9 @@ def resolve_due_messages(
     if now is None:
         now = utcnow()
     due = session.execute(
-        select(Message.id, Message.distance_km).where(
-            Message.status == IN_FLIGHT, Message.arrival_at <= now
-        )
+        select(Message.id, Message.distance_km)
+        .where(Message.status == IN_FLIGHT, Message.arrival_at <= now)
+        .order_by(Message.id)
     ).all()
     resolved = 0
     for message_id, distance_km in due:

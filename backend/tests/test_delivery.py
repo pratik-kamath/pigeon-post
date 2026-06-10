@@ -115,3 +115,42 @@ def test_already_resolved_message_untouched(db_session):
     assert count == 0
     db_session.refresh(message)
     assert message.status == DELIVERED
+
+
+def test_sweep_resolves_multiple_due_messages(db_session):
+    rolls = iter([0.0, 0.999])
+    due_lost = make_message(db_session, arrival_at=datetime(2026, 6, 11, 11, 0, 0))
+    due_delivered = make_message(db_session, arrival_at=datetime(2026, 6, 11, 10, 0, 0))
+    future = make_message(db_session, arrival_at=datetime(2026, 6, 12, 12, 0, 0))
+    already = make_message(
+        db_session, arrival_at=datetime(2026, 6, 11, 9, 0, 0), status=DELIVERED
+    )
+
+    count = resolve_due_messages(db_session, rng=lambda: next(rolls), now=NOW)
+
+    assert count == 2
+    for message in (due_lost, due_delivered, future, already):
+        db_session.refresh(message)
+    assert due_lost.status == LOST
+    assert due_delivered.status == DELIVERED
+    assert future.status == IN_FLIGHT
+    assert already.status == DELIVERED
+
+
+def test_one_bad_row_does_not_poison_the_batch(db_session):
+    def exploding_then_fine():
+        if not hasattr(exploding_then_fine, "called"):
+            exploding_then_fine.called = True
+            raise RuntimeError("boom")
+        return 0.999
+
+    bad = make_message(db_session, arrival_at=datetime(2026, 6, 11, 11, 0, 0))
+    good = make_message(db_session, arrival_at=datetime(2026, 6, 11, 10, 0, 0))
+
+    count = resolve_due_messages(db_session, rng=exploding_then_fine, now=NOW)
+
+    assert count == 1
+    db_session.refresh(bad)
+    db_session.refresh(good)
+    assert bad.status == IN_FLIGHT
+    assert good.status == DELIVERED
