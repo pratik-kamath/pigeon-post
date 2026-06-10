@@ -46,11 +46,19 @@ uvicorn app.main:app --reload
 
 The API will be available at <http://localhost:8000>. Interactive docs at <http://localhost:8000/docs>.
 
-Later, once the delivery mechanic exists (a future Phase 1 milestone), the `FAST_FORWARD` env var will let you test scheduled delivery without waiting real pigeon-flight time:
+To test the delivery mechanic without waiting for realistic pigeon flight
+time, set the fast-forward env var (it only affects newly sent messages):
 
 ```bash
-FAST_FORWARD=120 uvicorn app.main:app --reload  # 1 real hour = 30s of pigeon time
+FAST_FORWARD=5000 uvicorn app.main:app --reload  # NYC → SF lands in ~37s
 ```
+
+### API at a glance
+
+- `POST /messages` — send a pigeon: `{sender, recipient, body, origin, destination}` (city names from the built-in catalog, see `app/cities.py`)
+- `GET /messages/{id}` — track one message
+- `GET /messages?sender=NAME` — everything you've sent, any status
+- `GET /messages?recipient=NAME` — your inbox (delivered messages only)
 
 ### Running tests
 

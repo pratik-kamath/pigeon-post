@@ -3,7 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app import db
-from app.main import create_app
+from app.main import SWEEP_INTERVAL_SECONDS, _run_sweep, create_app
 
 
 def test_lifespan_starts_and_stops_scheduler(tmp_path, monkeypatch):
@@ -24,6 +24,9 @@ def test_lifespan_starts_and_stops_scheduler(tmp_path, monkeypatch):
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
         assert app.state.scheduler.running is True
+        [job] = app.state.scheduler.get_jobs()
+        assert job.func is _run_sweep
+        assert job.trigger.interval.total_seconds() == SWEEP_INTERVAL_SECONDS
     assert app.state.scheduler.running is False
     engine.dispose()
 
