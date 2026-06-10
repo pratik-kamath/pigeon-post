@@ -177,7 +177,7 @@ def test_fast_forward_unset_means_real_time(monkeypatch):
     assert fast_forward_factor() == 1.0
 
 
-@pytest.mark.parametrize("bad", ["banana", "0", "-5"])
+@pytest.mark.parametrize("bad", ["banana", "0", "-5", "nan", "inf"])
 def test_invalid_fast_forward_fails_clearly(monkeypatch, bad):
     monkeypatch.setenv("FAST_FORWARD", bad)
     with pytest.raises(ValueError, match="FAST_FORWARD"):
@@ -207,6 +207,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.delivery'`
 Create `backend/app/delivery.py`:
 
 ```python
+import math
 import os
 from datetime import UTC, datetime, timedelta
 
@@ -230,8 +231,8 @@ def fast_forward_factor() -> float:
         factor = float(raw)
     except ValueError:
         raise ValueError(f"FAST_FORWARD must be a number, got {raw!r}") from None
-    if factor <= 0:
-        raise ValueError(f"FAST_FORWARD must be > 0, got {factor}")
+    if not math.isfinite(factor) or factor <= 0:
+        raise ValueError(f"FAST_FORWARD must be a finite number > 0, got {factor}")
     return factor
 
 
