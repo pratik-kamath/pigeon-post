@@ -65,10 +65,13 @@ def register(payload: RegisterIn, response: Response, db: Session = Depends(get_
     )
     db.add(user)
     try:
-        db.commit()
-    except IntegrityError:
-        # Unique-index backstop for races the pre-check missed.
+        # flush assigns user.id and trips the unique-index backstop for races
+        # the pre-check missed — without committing, so the user row and the
+        # refresh token land in one transaction (committed in _issue_token_pair).
+        db.flush()
+    except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(status_code=409, detail="username or email already taken")
-    db.refresh(user)
+        raise HTTPException(
+            status_code=409, detail="username or email already taken"
+        ) from exc
     return _issue_token_pair(db, user, response)
