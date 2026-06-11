@@ -1,6 +1,6 @@
 # Pigeon Post
 
-Fun-and-learn messaging app where messages travel at real pigeon flight speed. Personal learning project, built in small phased milestones (roadmap in README). Phase 1 in progress — the messaging core exists: message model, send/track/inbox endpoints, and the APScheduler delivery sweep. Auth and the frontend are still to come.
+Fun-and-learn messaging app where messages travel at real pigeon flight speed. Personal learning project, built in small phased milestones (roadmap in README). Phase 1 in progress — the messaging core exists (message model, send/track/inbox endpoints, APScheduler delivery sweep) and password auth with a JWT access/refresh pair (`/auth/*`). Still to come: messages tied to user accounts, Google OAuth, and the frontend.
 
 ## Commands
 
@@ -31,3 +31,4 @@ uvicorn app.main:app --reload         # dev server :8000, docs at /docs
 - Never start APScheduler at import time — it's wired into the app lifespan inside `create_app()` (tests pass `start_scheduler=False`).
 - `FAST_FORWARD` only affects newly sent messages: `arrival_at` is fixed at send time and the sweep never reads the env var.
 - The app is single-process/dev-only: multiple uvicorn workers would each run their own delivery scheduler.
+- Refresh tokens rotate on every use; replaying an old one revokes all of a user's tokens (reuse detection). Tests that refresh twice must use the newest token.
