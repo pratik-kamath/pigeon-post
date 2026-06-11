@@ -10,7 +10,7 @@ from argon2.exceptions import InvalidHashError, VerificationError
 
 from app.delivery import utcnow
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret-not-for-production")
+JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret-not-for-production-pad-to-32-bytes")
 JWT_ISSUER = "pigeon-post"
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_TTL = timedelta(minutes=15)

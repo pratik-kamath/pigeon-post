@@ -39,7 +39,7 @@ class TestAccessTokens:
     def test_wrong_secret_rejected(self):
         forged = jwt.encode(
             {"sub": "42", "iat": 0, "exp": 9999999999, "iss": security.JWT_ISSUER},
-            "not-the-real-secret",
+            "not-the-real-secret-pad-to-32-bytes-here",
             algorithm="HS256",
         )
         with pytest.raises(jwt.InvalidSignatureError):
@@ -63,3 +63,13 @@ class TestAccessTokens:
         )
         with pytest.raises(jwt.InvalidTokenError):
             security.decode_access_token(bad)
+
+    def test_alg_none_rejected(self):
+        # The fixed algorithms list must reject unsigned alg=none tokens.
+        unsigned = jwt.encode(
+            {"sub": "42", "iat": 0, "exp": 9999999999, "iss": security.JWT_ISSUER},
+            None,
+            algorithm="none",
+        )
+        with pytest.raises(jwt.InvalidTokenError):
+            security.decode_access_token(unsigned)
