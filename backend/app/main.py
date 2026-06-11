@@ -4,6 +4,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 
 from app import db, models  # noqa: F401  — models registers tables on Base.metadata
+from app.auth_routes import router as auth_router
 from app.delivery import resolve_due_messages
 from app.routes import router
 
@@ -49,6 +50,7 @@ def create_app(start_scheduler: bool = True, create_tables: bool = True) -> Fast
         return {"status": "ok"}
 
     app.include_router(router)
+    app.include_router(auth_router)
     return app
 
 
