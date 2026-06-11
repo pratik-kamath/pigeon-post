@@ -1,6 +1,10 @@
 import jwt
 
 from app import security
+from datetime import timedelta
+
+from app.delivery import utcnow
+from app.models import RefreshToken, User
 
 REGISTER = {"username": "alice", "email": "alice@example.com", "password": "hunter2hunter2"}
 
@@ -120,4 +124,67 @@ class TestMe:
             algorithm="HS256",
         )
         resp = client.get("/auth/me", headers={"Authorization": f"Bearer {bad}"})
+        assert resp.status_code == 401
+
+
+class TestRefresh:
+    def test_rotated_refresh_token_can_be_used_once(self, client):
+        # Guards against an implementation that returns unusable replacements.
+        old = register(client).json()
+        new = client.post(
+            "/auth/refresh", json={"refresh_token": old["refresh_token"]}
+        ).json()
+        resp = client.post(
+            "/auth/refresh", json={"refresh_token": new["refresh_token"]}
+        )
+        assert resp.status_code == 200
+
+    def test_rotation_returns_new_pair_and_revokes_old(self, client):
+        old = register(client).json()
+        resp = client.post(
+            "/auth/refresh", json={"refresh_token": old["refresh_token"]}
+        )
+        assert resp.status_code == 200
+        new = resp.json()
+        assert new["refresh_token"] != old["refresh_token"]
+        assert resp.headers["Cache-Control"] == "no-store"
+        # The old token was revoked by rotation; replaying it must fail.
+        replay = client.post(
+            "/auth/refresh", json={"refresh_token": old["refresh_token"]}
+        )
+        assert replay.status_code == 401
+
+    def test_reuse_detection_revokes_everything(self, client):
+        old = register(client).json()
+        new = client.post(
+            "/auth/refresh", json={"refresh_token": old["refresh_token"]}
+        ).json()
+        # Replay the rotated token: reuse detection should kill the new one too.
+        client.post("/auth/refresh", json={"refresh_token": old["refresh_token"]})
+        resp = client.post(
+            "/auth/refresh", json={"refresh_token": new["refresh_token"]}
+        )
+        assert resp.status_code == 401
+
+    def test_unknown_token_401(self, client):
+        resp = client.post("/auth/refresh", json={"refresh_token": "made-up"})
+        assert resp.status_code == 401
+        # Same uniform body/header as every other auth failure.
+        assert resp.json() == {"detail": "invalid credentials"}
+        assert resp.headers["WWW-Authenticate"] == "Bearer"
+
+    def test_expired_token_401(self, client, db_session):
+        register(client)
+        user = db_session.query(User).one()
+        raw, token_hash = security.new_refresh_token()
+        db_session.add(
+            RefreshToken(
+                user_id=user.id,
+                token_hash=token_hash,
+                expires_at=utcnow() - timedelta(seconds=1),
+                created_at=utcnow() - timedelta(days=31),
+            )
+        )
+        db_session.commit()
+        resp = client.post("/auth/refresh", json={"refresh_token": raw})
         assert resp.status_code == 401

@@ -2,14 +2,14 @@ import logging
 
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, security
 from app.db import get_db
 from app.delivery import utcnow
-from app.schemas import LoginIn, RegisterIn, TokenPairOut, UserOut
+from app.schemas import LoginIn, RefreshIn, RegisterIn, TokenPairOut, UserOut
 
 logger = logging.getLogger(__name__)
 
@@ -116,3 +116,63 @@ def get_current_user(
 @router.get("/me", response_model=UserOut)
 def me(current_user: models.User = Depends(get_current_user)):
     return current_user
+
+
+@router.post("/refresh", response_model=TokenPairOut)
+def refresh(payload: RefreshIn, response: Response, db: Session = Depends(get_db)):
+    now = utcnow()
+    token = db.execute(
+        select(models.RefreshToken).where(
+            models.RefreshToken.token_hash
+            == security.hash_refresh_token(payload.refresh_token)
+        )
+    ).scalar_one_or_none()
+    if token is None:
+        raise _credentials_error()
+    if token.revoked_at is not None:
+        # Replay of a rotated/revoked token — assume theft, revoke the lot.
+        db.execute(
+            update(models.RefreshToken)
+            .where(
+                models.RefreshToken.user_id == token.user_id,
+                models.RefreshToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
+        db.commit()
+        logger.warning("refresh token reuse detected for user %s", token.user_id)
+        raise _credentials_error()
+    # Atomic rotation: revoke-if-still-live-and-unexpired, then check rowcount.
+    result = db.execute(
+        update(models.RefreshToken)
+        .where(
+            models.RefreshToken.id == token.id,
+            models.RefreshToken.revoked_at.is_(None),
+            models.RefreshToken.expires_at > now,
+        )
+        .values(revoked_at=now)
+    )
+    db.commit()
+    if (result.rowcount or 0) != 1:
+        # Either expired, or a concurrent refresh revoked it between our
+        # SELECT and UPDATE. The latter is still a second presentation of the
+        # same token — same theft assumption as the replay branch above.
+        db.refresh(token)
+        if token.revoked_at is not None:
+            db.execute(
+                update(models.RefreshToken)
+                .where(
+                    models.RefreshToken.user_id == token.user_id,
+                    models.RefreshToken.revoked_at.is_(None),
+                )
+                .values(revoked_at=now)
+            )
+            db.commit()
+            logger.warning(
+                "refresh token reuse detected for user %s", token.user_id
+            )
+        raise _credentials_error()
+    user = db.get(models.User, token.user_id)
+    if user is None:
+        raise _credentials_error()
+    return _issue_token_pair(db, user, response)
