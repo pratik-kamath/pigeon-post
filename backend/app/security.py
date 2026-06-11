@@ -62,3 +62,13 @@ def decode_access_token(token: str) -> int:
         return int(payload["sub"])
     except (TypeError, ValueError):
         raise jwt.InvalidTokenError("invalid subject") from None
+
+
+def hash_refresh_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def new_refresh_token() -> tuple[str, str]:
+    """Returns (raw token for the client, sha256 hex hash for the DB)."""
+    raw = secrets.token_urlsafe(32)
+    return raw, hash_refresh_token(raw)

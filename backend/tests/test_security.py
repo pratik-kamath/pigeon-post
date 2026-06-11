@@ -73,3 +73,17 @@ class TestAccessTokens:
         )
         with pytest.raises(jwt.InvalidTokenError):
             security.decode_access_token(unsigned)
+
+
+class TestRefreshTokens:
+    def test_new_token_returns_raw_and_hash(self):
+        raw, token_hash = security.new_refresh_token()
+        assert security.hash_refresh_token(raw) == token_hash
+
+    def test_hash_is_hex_sha256(self):
+        _, token_hash = security.new_refresh_token()
+        assert len(token_hash) == 64
+        int(token_hash, 16)  # raises if not hex
+
+    def test_tokens_are_unique(self):
+        assert security.new_refresh_token() != security.new_refresh_token()
