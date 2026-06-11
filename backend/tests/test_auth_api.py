@@ -188,3 +188,24 @@ class TestRefresh:
         db_session.commit()
         resp = client.post("/auth/refresh", json={"refresh_token": raw})
         assert resp.status_code == 401
+
+
+class TestLogout:
+    def test_logout_revokes_refresh_token(self, client):
+        pair = register(client).json()
+        resp = client.post(
+            "/auth/logout", json={"refresh_token": pair["refresh_token"]}
+        )
+        assert resp.status_code == 204
+        resp = client.post(
+            "/auth/refresh", json={"refresh_token": pair["refresh_token"]}
+        )
+        assert resp.status_code == 401
+
+    def test_logout_is_idempotent(self, client):
+        pair = register(client).json()
+        client.post("/auth/logout", json={"refresh_token": pair["refresh_token"]})
+        resp = client.post(
+            "/auth/logout", json={"refresh_token": pair["refresh_token"]}
+        )
+        assert resp.status_code == 204

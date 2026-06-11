@@ -176,3 +176,18 @@ def refresh(payload: RefreshIn, response: Response, db: Session = Depends(get_db
     if user is None:
         raise _credentials_error()
     return _issue_token_pair(db, user, response)
+
+
+@router.post("/logout", status_code=204)
+def logout(payload: RefreshIn, db: Session = Depends(get_db)) -> None:
+    # Always 204 — logout is idempotent and never confirms whether a token existed.
+    db.execute(
+        update(models.RefreshToken)
+        .where(
+            models.RefreshToken.token_hash
+            == security.hash_refresh_token(payload.refresh_token),
+            models.RefreshToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=utcnow())
+    )
+    db.commit()
