@@ -77,6 +77,10 @@ class TestPasswordHashing:
     def test_fresh_hash_needs_no_rehash(self):
         h = security.hash_password("pw")
         assert not security.password_needs_rehash(h)
+
+    def test_malformed_stored_hash_is_invalid_not_error(self):
+        # A corrupt DB value must read as "wrong password", never a 500.
+        assert not security.verify_password("pw", "not-an-argon2-hash")
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -96,7 +100,7 @@ from datetime import timedelta
 
 import jwt
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
+from argon2.exceptions import InvalidHashError, VerificationError
 
 from app.delivery import utcnow
 
@@ -116,7 +120,9 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, password_hash: str) -> bool:
     try:
         return _hasher.verify(password_hash, password)
-    except VerifyMismatchError:
+    except (VerificationError, InvalidHashError):
+        # VerifyMismatchError subclasses VerificationError; malformed stored
+        # hashes must look like bad credentials, not crash the endpoint.
         return False
 
 
@@ -127,7 +133,7 @@ def password_needs_rehash(password_hash: str) -> bool:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_security.py -v`
-Expected: 3 PASS
+Expected: 4 PASS
 
 - [ ] **Step 5: Commit**
 
@@ -180,6 +186,16 @@ class TestAccessTokens:
         )
         with pytest.raises(jwt.MissingRequiredClaimError):
             security.decode_access_token(incomplete)
+
+    def test_non_integer_sub_rejected(self):
+        # Validly signed but garbage sub must be InvalidTokenError, not ValueError.
+        bad = jwt.encode(
+            {"sub": "abc", "iat": 0, "exp": 9999999999, "iss": security.JWT_ISSUER},
+            security.JWT_SECRET,
+            algorithm="HS256",
+        )
+        with pytest.raises(jwt.InvalidTokenError):
+            security.decode_access_token(bad)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -211,7 +227,10 @@ def decode_access_token(token: str) -> int:
         issuer=JWT_ISSUER,
         options={"require": ["sub", "exp", "iat", "iss"]},
     )
-    return int(payload["sub"])
+    try:
+        return int(payload["sub"])
+    except (TypeError, ValueError):
+        raise jwt.InvalidTokenError("invalid subject") from None
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -473,7 +492,7 @@ USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9_]{3,30}$")
 
 class RegisterIn(BaseModel):
     username: str
-    email: EmailStr
+    email: EmailStr = Field(max_length=255)  # SQLite won't enforce String(255)
     password: str = Field(min_length=8, max_length=128)
 
     @field_validator("username")
@@ -494,7 +513,7 @@ class RegisterIn(BaseModel):
 
 
 class LoginIn(BaseModel):
-    email: EmailStr
+    email: EmailStr = Field(max_length=255)
     password: str
 
     @field_validator("email")
@@ -577,8 +596,10 @@ def _issue_token_pair(
 def register(payload: RegisterIn, response: Response, db: Session = Depends(get_db)):
     taken = db.execute(
         select(models.User.id).where(
+            # Both sides lowered — matches the functional unique indexes and
+            # stays correct even if a future write path forgets to normalize.
             (func.lower(models.User.username) == payload.username.lower())
-            | (models.User.email == payload.email)  # email is stored lowercase
+            | (func.lower(models.User.email) == payload.email.lower())
         )
     ).first()
     if taken:
@@ -659,6 +680,15 @@ class TestLogin:
         assert wrong_pw.status_code == unknown.status_code == 401
         assert wrong_pw.json() == unknown.json()
         assert wrong_pw.headers["WWW-Authenticate"] == "Bearer"
+        assert unknown.headers["WWW-Authenticate"] == "Bearer"
+
+    def test_login_email_case_insensitive(self, client):
+        register(client)
+        resp = client.post(
+            "/auth/login",
+            json={"email": "ALICE@example.com", "password": REGISTER["password"]},
+        )
+        assert resp.status_code == 200
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -672,7 +702,9 @@ Expected: new tests FAIL — 404 (no `/auth/login`)
 @router.post("/login", response_model=TokenPairOut)
 def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
     user = db.execute(
-        select(models.User).where(models.User.email == payload.email)
+        select(models.User).where(
+            func.lower(models.User.email) == payload.email.lower()
+        )
     ).scalar_one_or_none()
     if user is None or user.password_hash is None:
         raise _credentials_error()
@@ -732,6 +764,39 @@ class TestMe:
             "/auth/me", headers={"Authorization": "Bearer not.a.jwt"}
         )
         assert resp.status_code == 401
+
+    def test_wrong_scheme_401(self, client):
+        resp = client.get("/auth/me", headers={"Authorization": "Basic abc"})
+        assert resp.status_code == 401
+
+    def test_bearer_without_token_401(self, client):
+        resp = client.get("/auth/me", headers={"Authorization": "Bearer "})
+        assert resp.status_code == 401
+
+    def test_lowercase_bearer_scheme_accepted(self, client):
+        # RFC 7235: the auth scheme is case-insensitive.
+        token = auth_headers(client)["Authorization"].removeprefix("Bearer ")
+        resp = client.get(
+            "/auth/me", headers={"Authorization": f"bearer {token}"}
+        )
+        assert resp.status_code == 200
+
+    def test_signed_token_with_non_integer_sub_401(self, client):
+        bad = jwt.encode(
+            {"sub": "abc", "iat": 0, "exp": 9999999999, "iss": security.JWT_ISSUER},
+            security.JWT_SECRET,
+            algorithm="HS256",
+        )
+        resp = client.get("/auth/me", headers={"Authorization": f"Bearer {bad}"})
+        assert resp.status_code == 401
+```
+
+These tests need two imports added at the top of `tests/test_auth_api.py`:
+
+```python
+import jwt
+
+from app import security
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -746,10 +811,12 @@ def get_current_user(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> models.User:
-    if authorization is None or not authorization.startswith("Bearer "):
+    # RFC 7235: scheme is case-insensitive; parse it explicitly.
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
         raise _credentials_error()
     try:
-        user_id = security.decode_access_token(authorization.removeprefix("Bearer "))
+        user_id = security.decode_access_token(token.strip())
     except jwt.InvalidTokenError:
         raise _credentials_error()
     user = db.get(models.User, user_id)
@@ -788,12 +855,22 @@ git commit -m "feat: get_current_user guard and GET /auth/me"
 ```python
 from datetime import timedelta
 
-from app import security
 from app.delivery import utcnow
 from app.models import RefreshToken, User
 
 
 class TestRefresh:
+    def test_rotated_refresh_token_can_be_used_once(self, client):
+        # Guards against an implementation that returns unusable replacements.
+        old = register(client).json()
+        new = client.post(
+            "/auth/refresh", json={"refresh_token": old["refresh_token"]}
+        ).json()
+        resp = client.post(
+            "/auth/refresh", json={"refresh_token": new["refresh_token"]}
+        )
+        assert resp.status_code == 200
+
     def test_rotation_returns_new_pair_and_revokes_old(self, client):
         old = register(client).json()
         resp = client.post(
@@ -824,6 +901,9 @@ class TestRefresh:
     def test_unknown_token_401(self, client):
         resp = client.post("/auth/refresh", json={"refresh_token": "made-up"})
         assert resp.status_code == 401
+        # Same uniform body/header as every other auth failure.
+        assert resp.json() == {"detail": "invalid credentials"}
+        assert resp.headers["WWW-Authenticate"] == "Bearer"
 
     def test_expired_token_401(self, client, db_session):
         register(client)
@@ -886,7 +966,24 @@ def refresh(payload: RefreshIn, response: Response, db: Session = Depends(get_db
     )
     db.commit()
     if (result.rowcount or 0) != 1:
-        raise _credentials_error()  # expired, or lost a race
+        # Either expired, or a concurrent refresh revoked it between our
+        # SELECT and UPDATE. The latter is still a second presentation of the
+        # same token — same theft assumption as the replay branch above.
+        db.refresh(token)
+        if token.revoked_at is not None:
+            db.execute(
+                update(models.RefreshToken)
+                .where(
+                    models.RefreshToken.user_id == token.user_id,
+                    models.RefreshToken.revoked_at.is_(None),
+                )
+                .values(revoked_at=now)
+            )
+            db.commit()
+            logger.warning(
+                "refresh token reuse detected for user %s", token.user_id
+            )
+        raise _credentials_error()
     user = db.get(models.User, token.user_id)
     if user is None:
         raise _credentials_error()

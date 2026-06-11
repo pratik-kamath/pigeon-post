@@ -75,7 +75,7 @@ Refresh tokens are opaque random strings, not JWTs — they hit the DB anyway, s
 | `POST /auth/register` | `{username, email, password}` → create user, return token pair. 409 on duplicate username/email (case-insensitive). |
 | `POST /auth/login` | `{email, password}` → verify (then `check_needs_rehash`), return token pair. Generic 401 for unknown email *or* wrong password — no account enumeration. |
 | `POST /auth/refresh` | `{refresh_token}` → atomic rotation, new pair. Replayed-revoked token trips reuse detection. |
-| `POST /auth/logout` | Revokes the presented refresh token. Access token expires naturally. |
+| `POST /auth/logout` | Revokes the presented refresh token. Always 204 — idempotent, never confirms whether a token existed. Access token expires naturally. |
 | `GET /auth/google/login` | Authlib builds the Google consent redirect. |
 | `GET /auth/google/callback` | Code exchange + ID-token verification via Authlib, then the linking rule above. |
 | `GET /auth/me` | Current user — the simplest guard smoke test in `/docs`. |
@@ -103,7 +103,7 @@ Env vars with dev-friendly defaults so tests run with zero setup: `JWT_SECRET`, 
 
 ## Error handling
 
-- 401 (uniform message, `WWW-Authenticate: Bearer`): missing/expired/malformed access token, bad credentials, revoked/unknown refresh token.
+- 401 (uniform message, `WWW-Authenticate: Bearer`): missing/expired/malformed access token, bad credentials, revoked/unknown refresh token on `/auth/refresh` (logout instead returns 204 unconditionally — idempotent, no token-existence oracle).
 - 409: registration conflicts; Google email collision with an existing password account.
 - 404: unknown recipient on send; messages you're not a party to.
 - 400: OAuth callback failures (denied consent, bad state, provider error) — plain message, no stack traces.
