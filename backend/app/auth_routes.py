@@ -1,6 +1,7 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+import jwt
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -8,7 +9,7 @@ from sqlalchemy.orm import Session
 from app import models, security
 from app.db import get_db
 from app.delivery import utcnow
-from app.schemas import LoginIn, RegisterIn, TokenPairOut
+from app.schemas import LoginIn, RegisterIn, TokenPairOut, UserOut
 
 logger = logging.getLogger(__name__)
 
@@ -92,3 +93,26 @@ def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
         user.password_hash = security.hash_password(payload.password)
         db.commit()
     return _issue_token_pair(db, user, response)
+
+
+def get_current_user(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> models.User:
+    # RFC 7235: scheme is case-insensitive; parse it explicitly.
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise _credentials_error()
+    try:
+        user_id = security.decode_access_token(token.strip())
+    except jwt.InvalidTokenError:
+        raise _credentials_error()
+    user = db.get(models.User, user_id)
+    if user is None:
+        raise _credentials_error()
+    return user
+
+
+@router.get("/me", response_model=UserOut)
+def me(current_user: models.User = Depends(get_current_user)):
+    return current_user
