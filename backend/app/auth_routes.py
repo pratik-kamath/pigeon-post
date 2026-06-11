@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app import models, security
 from app.db import get_db
 from app.delivery import utcnow
-from app.schemas import RegisterIn, TokenPairOut
+from app.schemas import LoginIn, RegisterIn, TokenPairOut
 
 logger = logging.getLogger(__name__)
 
@@ -74,4 +74,21 @@ def register(payload: RegisterIn, response: Response, db: Session = Depends(get_
         raise HTTPException(
             status_code=409, detail="username or email already taken"
         ) from exc
+    return _issue_token_pair(db, user, response)
+
+
+@router.post("/login", response_model=TokenPairOut)
+def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
+    user = db.execute(
+        select(models.User).where(
+            func.lower(models.User.email) == payload.email.lower()
+        )
+    ).scalar_one_or_none()
+    if user is None or user.password_hash is None:
+        raise _credentials_error()
+    if not security.verify_password(payload.password, user.password_hash):
+        raise _credentials_error()
+    if security.password_needs_rehash(user.password_hash):
+        user.password_hash = security.hash_password(payload.password)
+        db.commit()
     return _issue_token_pair(db, user, response)
