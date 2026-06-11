@@ -2,6 +2,6 @@ fastapi
 uvicorn[standard]
 sqlalchemy
 apscheduler<4
-passlib[bcrypt]
-python-jose[cryptography]
-python-multipart
+pyjwt
+argon2-cffi
+email-validator
