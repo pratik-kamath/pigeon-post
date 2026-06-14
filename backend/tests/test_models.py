@@ -30,6 +30,10 @@ def test_message_roundtrip(db_session):
     db_session.add(message)
     db_session.commit()
 
+    # expire_on_commit=False keeps committed objects in the identity map, so
+    # without expunge get() would return the same in-memory instance and never
+    # prove a real reload from SQLite.
+    db_session.expunge_all()
     loaded = db_session.get(Message, message.id)
     assert loaded.status == IN_FLIGHT
     assert loaded.sender == "pratik"      # property resolves to username

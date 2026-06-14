@@ -34,3 +34,4 @@ uvicorn app.main:app --reload         # dev server :8000, docs at /docs
 - Refresh tokens rotate on every use; replaying an old one revokes all of a user's tokens (reuse detection). Tests that refresh twice must use the newest token.
 - All `/messages` endpoints require a bearer access token. The sender is always the token's user (any `sender` in the body is ignored); the recipient is looked up by username (case-insensitive) and must exist.
 - SQLite enforces foreign keys only because of the `Engine`-level `PRAGMA foreign_keys=ON` listener in `db.py`; without it the `Message` → `User` FKs would be silently unenforced.
+- No migrations in dev: the schema is created by `Base.metadata.create_all`, which never ALTERs an existing table. After a schema-changing milestone, delete the gitignored `backend/pigeon.db*` so the dev DB is recreated cleanly.

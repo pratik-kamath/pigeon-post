@@ -17,7 +17,9 @@ class Message(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     sender_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    recipient_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    # No standalone index: the composite (recipient_id, status) below already
+    # serves recipient-only lookups via its leftmost prefix.
+    recipient_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     body: Mapped[str] = mapped_column(String(500))
     origin: Mapped[str] = mapped_column(String(50))
     destination: Mapped[str] = mapped_column(String(50))
@@ -32,6 +34,9 @@ class Message(Base):
     sender_user: Mapped["User"] = relationship(foreign_keys=[sender_id])
     recipient_user: Mapped["User"] = relationship(foreign_keys=[recipient_id])
 
+    # These are plain instance properties for serialization (MessageOut), NOT
+    # query columns. Filter on sender_id/recipient_id (or sender_user); never
+    # `Message.sender == x` — that compares the property object, not SQL.
     @property
     def sender(self) -> str:
         return self.sender_user.username

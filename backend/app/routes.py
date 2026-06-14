@@ -1,7 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app import models
@@ -112,20 +112,23 @@ def get_message(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    message = db.get(
-        models.Message,
-        message_id,
-        # Eager-load both parties so MessageOut resolves usernames without a
-        # lazy load, consistent with the inbox/sent endpoints.
-        options=[
+    # Authorization is part of the query: a non-party (or a missing id) matches
+    # no row, so unauthorized rows never load. 404 (not 403) so non-parties
+    # can't probe which ids exist. Eager-load both parties for MessageOut.
+    message = db.execute(
+        select(models.Message)
+        .options(
             joinedload(models.Message.sender_user),
             joinedload(models.Message.recipient_user),
-        ],
-    )
-    if message is None or current_user.id not in (
-        message.sender_id,
-        message.recipient_id,
-    ):
-        # 404 (not 403) so non-parties can't probe which ids exist.
+        )
+        .where(
+            models.Message.id == message_id,
+            or_(
+                models.Message.sender_id == current_user.id,
+                models.Message.recipient_id == current_user.id,
+            ),
+        )
+    ).scalar_one_or_none()
+    if message is None:
         raise HTTPException(status_code=404, detail="message not found")
     return message
