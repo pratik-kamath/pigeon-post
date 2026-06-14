@@ -1,6 +1,6 @@
 # Pigeon Post
 
-Fun-and-learn messaging app where messages travel at real pigeon flight speed. Personal learning project, built in small phased milestones (roadmap in README). Phase 1 in progress — the messaging core exists (message model, send/track/inbox endpoints, APScheduler delivery sweep) and password auth with a JWT access/refresh pair (`/auth/*`). Messages are now tied to user accounts (sent by the authenticated user, addressed to a registered username). Still to come: Google OAuth and the frontend.
+Fun-and-learn messaging app where messages travel at real pigeon flight speed. Personal learning project, built in small phased milestones (roadmap in README). Phase 1 in progress — the messaging core exists (message model, send/track/inbox endpoints, APScheduler delivery sweep) and password auth with a JWT access/refresh pair (`/auth/*`). Messages are tied to user accounts, and Google sign-in is implemented (`POST /auth/google`, verify-ID-token flow). Still to come: the frontend.
 
 ## Commands
 
@@ -35,3 +35,4 @@ uvicorn app.main:app --reload         # dev server :8000, docs at /docs
 - All `/messages` endpoints require a bearer access token. The sender is always the token's user (any `sender` in the body is ignored); the recipient is looked up by username (case-insensitive) and must exist.
 - SQLite enforces foreign keys only because of the `Engine`-level `PRAGMA foreign_keys=ON` listener in `db.py`; without it the `Message` → `User` FKs would be silently unenforced.
 - No migrations in dev: the schema is created by `Base.metadata.create_all`, which never ALTERs an existing table. After a schema-changing milestone, delete the gitignored `backend/pigeon.db*` so the dev DB is recreated cleanly.
+- `POST /auth/google` verifies a Google ID token (no redirect flow) and needs `GOOGLE_CLIENT_ID` set, else it returns 500. Verification is isolated in `app/google_auth.py` behind `verify_google_id_token` — tests monkeypatch that seam (and patch `app.auth_routes.verify_google_id_token` for route tests). A Google login auto-links to an existing account by verified email; password-side emails aren't verified, a documented trust tradeoff.

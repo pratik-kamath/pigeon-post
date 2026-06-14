@@ -57,6 +57,7 @@ FAST_FORWARD=5000 uvicorn app.main:app --reload  # NYC → SF lands in ~37s
 
 - `POST /auth/register` — `{username, email, password}` → access + refresh token pair
 - `POST /auth/login` — `{email, password}` → token pair
+- `POST /auth/google` — `{id_token}` (a Google ID token) → token pair; creates a new account or links to an existing one by verified email. Needs `GOOGLE_CLIENT_ID` set.
 - `POST /auth/refresh` — `{refresh_token}` → rotated token pair (old one is revoked)
 - `POST /auth/logout` — `{refresh_token}` revoked
 - `GET /auth/me` — current user (send `Authorization: Bearer <access_token>`)
@@ -66,7 +67,8 @@ FAST_FORWARD=5000 uvicorn app.main:app --reload  # NYC → SF lands in ~37s
 - `GET /messages/{id}` — track one message; visible only to its sender and recipient (auth required)
 
 Set `JWT_SECRET` in real deployments; a dev default is baked in. Access tokens
-last 15 minutes — use `/auth/refresh` to stay logged in.
+last 15 minutes — use `/auth/refresh` to stay logged in. Set `GOOGLE_CLIENT_ID`
+(your Google OAuth client ID) to enable `POST /auth/google`.
 
 ### Running tests
 
