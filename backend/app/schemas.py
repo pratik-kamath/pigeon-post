@@ -94,6 +94,10 @@ class RefreshIn(BaseModel):
     refresh_token: str
 
 
+class GoogleLoginIn(BaseModel):
+    id_token: str = Field(min_length=1)
+
+
 class TokenPairOut(BaseModel):
     access_token: str
     refresh_token: str

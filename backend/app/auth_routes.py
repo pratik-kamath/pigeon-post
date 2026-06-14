@@ -10,7 +10,19 @@ from sqlalchemy.orm import Session
 from app import models, security
 from app.db import get_db
 from app.delivery import utcnow
-from app.schemas import LoginIn, RefreshIn, RegisterIn, TokenPairOut, UserOut
+from app.google_auth import (
+    GoogleVerifyUnavailable,
+    InvalidGoogleToken,
+    verify_google_id_token,
+)
+from app.schemas import (
+    GoogleLoginIn,
+    LoginIn,
+    RefreshIn,
+    RegisterIn,
+    TokenPairOut,
+    UserOut,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +53,38 @@ def _generate_username(db: Session, email: str, name: str | None) -> str:
         suffix = str(n)
         candidate = f"{base[:30 - len(suffix)]}{suffix}"
     return candidate
+
+
+def _resolve_google_user(db: Session, identity) -> models.User:
+    """Find by google_sub, else link by verified email, else create."""
+    user = db.execute(
+        select(models.User).where(models.User.google_sub == identity.sub)
+    ).scalar_one_or_none()
+    if user is not None:
+        return user
+
+    existing = db.execute(
+        select(models.User).where(
+            func.lower(models.User.email) == identity.email
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        # google_sub == identity.sub would have matched above, so a set value
+        # here is a *different* Google account on the same email — refuse it.
+        if existing.google_sub is not None:
+            raise _credentials_error()
+        existing.google_sub = identity.sub
+        return existing
+
+    user = models.User(
+        username=_generate_username(db, identity.email, identity.name),
+        email=identity.email,
+        password_hash=None,
+        google_sub=identity.sub,
+        created_at=utcnow(),
+    )
+    db.add(user)
+    return user
 
 
 def _credentials_error() -> HTTPException:
@@ -119,6 +163,43 @@ def login(payload: LoginIn, response: Response, db: Session = Depends(get_db)):
     if security.password_needs_rehash(user.password_hash):
         user.password_hash = security.hash_password(payload.password)
         db.commit()
+    return _issue_token_pair(db, user, response)
+
+
+@router.post("/google", response_model=TokenPairOut)
+def google_login(
+    payload: GoogleLoginIn, response: Response, db: Session = Depends(get_db)
+):
+    try:
+        identity = verify_google_id_token(payload.id_token)
+    except InvalidGoogleToken:
+        raise _credentials_error()
+    except GoogleVerifyUnavailable as exc:
+        raise HTTPException(
+            status_code=503, detail="google verification unavailable"
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=500, detail="google login not configured"
+        ) from exc
+    if not identity.email_verified:
+        raise _credentials_error()
+
+    user = _resolve_google_user(db, identity)
+    try:
+        db.flush()
+    except IntegrityError:
+        # Rare concurrent race (same sub created, or username taken between
+        # generation and insert). Re-resolve by the stable sub; if still
+        # nothing, give up with a clear conflict.
+        db.rollback()
+        user = db.execute(
+            select(models.User).where(models.User.google_sub == identity.sub)
+        ).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(
+                status_code=409, detail="could not complete google login"
+            )
     return _issue_token_pair(db, user, response)
 
 
