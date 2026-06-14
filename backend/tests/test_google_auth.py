@@ -81,8 +81,9 @@ def test_bad_issuer_rejected(monkeypatch):
         verify_google_id_token("tok")
 
 
-def test_missing_sub_or_email_rejected(monkeypatch):
-    _patch_verify(monkeypatch, result=_claims(sub=None))
+@pytest.mark.parametrize("override", [{"sub": None}, {"email": None}, {"email": "   "}])
+def test_missing_sub_or_email_rejected(monkeypatch, override):
+    _patch_verify(monkeypatch, result=_claims(**override))
     with pytest.raises(InvalidGoogleToken):
         verify_google_id_token("tok")
 

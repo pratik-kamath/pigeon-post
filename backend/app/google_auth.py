@@ -7,7 +7,7 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
-_ACCEPTED_ISSUERS = {"accounts.google.com", "https://accounts.google.com"}
+_ACCEPTED_ISSUERS = frozenset({"accounts.google.com", "https://accounts.google.com"})
 # Reused for HTTP connection pooling. Does NOT cache Google's signing certs —
 # verify_oauth2_token re-fetches them each call. Fine for dev.
 _transport = google_requests.Request()
@@ -41,13 +41,13 @@ def verify_google_id_token(token: str) -> GoogleIdentity:
         raise GoogleVerifyUnavailable(str(exc)) from exc
     except (ValueError, google_exceptions.GoogleAuthError) as exc:
         # ValueError: bad signature/aud/exp/format.
-        # GoogleAuthError: wrong issuer (verify_oauth2_token checks iss itself).
+        # GoogleAuthError: wrong issuer or other auth-level failure.
         raise InvalidGoogleToken(str(exc)) from exc
     # Defensive (older google-auth versions didn't check iss inside verify):
     if claims.get("iss") not in _ACCEPTED_ISSUERS:
         raise InvalidGoogleToken("untrusted issuer")
     sub, email = claims.get("sub"), claims.get("email")
-    if not sub or not email:
+    if not sub or not email or not email.strip():
         raise InvalidGoogleToken("missing sub/email")
     return GoogleIdentity(
         sub=sub,
