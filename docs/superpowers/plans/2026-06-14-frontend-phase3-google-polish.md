@@ -267,17 +267,15 @@ Replace the existing `.pigeon--selected { outline: 2px solid var(--frame); outli
 ```css
 .pigeon--selected { outline: 2px solid var(--frame); outline-offset: 2px; animation: pop 0.3s ease-out, pulse 0.9s ease-in-out infinite; }
 ```
-Then append:
+Add `animation: pop 0.3s ease-out;` to the **existing early base `.pigeon { … }` rule** (the one with `position`/`clip-path`, declared BEFORE the modifiers). Do NOT add a second, late `.pigeon { animation: pop }` rule — equal specificity means source order decides, and a late base rule would clobber the `--in_flight`/`--selected` `animation` (killing the bob/pulse). Then append:
 ```css
-/* Launch flourish: every sprite pops in on first mount; in-flight/selected add more above. */
-.pigeon { animation: pop 0.3s ease-out; }
-/* A selected in-flight pigeon should pop + bob + pulse (combined class beats either single). */
+/* A selected in-flight pigeon needs the combined class (specificity 0,2,0) for all three. */
 .pigeon--in_flight.pigeon--selected { animation: pop 0.3s ease-out, bob 1.2s ease-in-out infinite 0.3s, pulse 0.9s ease-in-out infinite; }
 .pigeon:hover { transform: translate(-50%, -50%) scale(1.35); z-index: 3; }
 @keyframes pop { from { transform: translate(-50%, -50%) scale(0); } to { transform: translate(-50%, -50%) scale(1); } }
 @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(85, 102, 196, 0.6); } 50% { box-shadow: 0 0 0 4px rgba(85, 102, 196, 0); } }
 ```
-> The `--in_flight`/`--selected` rules (one class each, declared after the base) override `.pigeon`'s `animation`, so in-flight pigeons pop+bob, selected ones pop+pulse, delivered/lost just pop — no conflicting declarations. `bob` uses `margin-top` and `pulse` uses `box-shadow`, so neither fights the `:hover` `transform`. City markers are `pointer-events: none` (no city hover). The Phase-1 `prefers-reduced-motion` guard disables all of it.
+> Ordering matters: the base `.pigeon` `pop` is declared first, so the later `--in_flight`/`--selected`/combined rules win for their elements — in-flight pop+bob, selected pop+pulse, both pop+bob+pulse, delivered/lost just pop. `bob` uses `margin-top` and `pulse` uses `box-shadow`, so neither fights the `:hover` `transform`. City markers are `pointer-events: none` (no city hover). The Phase-1 `prefers-reduced-motion` guard disables all of it.
 
 - [ ] **Step 7: Run** `npm test` (all green), `npm run lint`, `npm run build` (clean).
 
