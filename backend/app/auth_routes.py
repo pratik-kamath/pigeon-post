@@ -1,4 +1,5 @@
 import logging
+import re
 
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
@@ -14,6 +15,32 @@ from app.schemas import LoginIn, RefreshIn, RegisterIn, TokenPairOut, UserOut
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _generate_username(db: Session, email: str, name: str | None) -> str:
+    """A unique username seeded from the Google email/name.
+
+    Always satisfies USERNAME_PATTERN (^[a-zA-Z0-9_]{3,30}$): sanitized to
+    allowed chars, padded if too short, and suffixed on collision.
+    """
+    base = re.sub(r"[^a-zA-Z0-9_]", "", email.split("@", 1)[0]).lower()
+    if len(base) < 3 and name:
+        base = re.sub(r"[^a-zA-Z0-9_]", "", name).lower()
+    if len(base) < 3:
+        base = base + "pigeon"
+    base = base[:30]
+
+    candidate = base
+    n = 0
+    while db.execute(
+        select(models.User.id).where(
+            func.lower(models.User.username) == candidate.lower()
+        )
+    ).first() is not None:
+        n += 1
+        suffix = str(n)
+        candidate = f"{base[:30 - len(suffix)]}{suffix}"
+    return candidate
 
 
 def _credentials_error() -> HTTPException:
