@@ -15,6 +15,11 @@ function mockAuth(over: Partial<ReturnType<typeof useAuthMod.useAuth>> = {}) {
 
 beforeEach(() => vi.restoreAllMocks()); // isolate the useAuth spy between tests
 
+afterEach(() => {
+  (globalThis as { google?: unknown }).google = undefined;
+  vi.unstubAllEnvs();
+});
+
 test("logs in with entered credentials", async () => {
   const login = vi.fn().mockResolvedValue(undefined);
   mockAuth({ login });
@@ -44,4 +49,17 @@ test("can switch to register and submit username+email+password", async () => {
   await userEvent.type(screen.getByLabelText(/password/i), "password123");
   await userEvent.click(screen.getByRole("button", { name: /^register$/i }));
   expect(register).toHaveBeenCalledWith("pratik", "a@b.com", "password123");
+});
+
+test("a Google credential logs in via loginWithGoogle", async () => {
+  vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-123");
+  let captured: ((r: { credential: string }) => void) | null = null;
+  (globalThis as { google?: unknown }).google = {
+    accounts: { id: { initialize: (o: { callback: (r: { credential: string }) => void }) => { captured = o.callback; }, renderButton: () => {} } },
+  };
+  const loginWithGoogle = vi.fn().mockResolvedValue(undefined);
+  mockAuth({ loginWithGoogle });
+  render(<AuthScreen />);
+  captured!({ credential: "tok" });
+  await waitFor(() => expect(loginWithGoogle).toHaveBeenCalledWith("tok"));
 });

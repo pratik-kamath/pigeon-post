@@ -1,11 +1,12 @@
 import { useState, type FormEvent } from "react";
 import { useAuth } from "../auth/useAuth";
 import { PixelButton } from "../components/PixelButton";
+import { GoogleSignInButton } from "../components/GoogleSignInButton";
 
 type Mode = "login" | "register";
 
 export function AuthScreen() {
-  const { login, register } = useAuth();
+  const { login, register, loginWithGoogle } = useAuth();
   const [mode, setMode] = useState<Mode>("login");
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -31,6 +32,15 @@ export function AuthScreen() {
     }
   }
 
+  async function onGoogleCredential(idToken: string) {
+    setError(null);
+    try {
+      await loginWithGoogle(idToken);
+    } catch {
+      setError("Google sign-in failed.");
+    }
+  }
+
   return (
     <div className="auth-screen">
       <div className="pk-screen auth-card scanlines">
@@ -52,6 +62,7 @@ export function AuthScreen() {
             {mode === "login" ? "LOG IN" : "REGISTER"}
           </PixelButton>
         </form>
+        <GoogleSignInButton onCredential={onGoogleCredential} />
         <button
           type="button"
           className="auth-toggle"
