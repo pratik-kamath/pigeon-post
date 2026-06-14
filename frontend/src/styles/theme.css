@@ -76,3 +76,16 @@ body {
 .auth-form input { font-family: var(--font-body); font-size: 18px; padding: 6px 8px; border: 2px solid var(--ink); background: #fff; }
 .auth-error { color: var(--accent); font-size: 16px; margin: 0; }
 .auth-toggle { background: none; border: none; color: var(--paper); font-family: var(--font-body); font-size: 16px; margin-top: 10px; cursor: pointer; text-decoration: underline; width: 100%; }
+
+.city { position: absolute; transform: translate(-50%, -50%); pointer-events: none; }
+.city-dot { display: block; width: 6px; height: 6px; background: var(--city); border: 2px solid var(--ink); }
+.city-label { position: absolute; left: 8px; top: -2px; font-size: 12px; color: var(--ink); background: var(--paper); border: 1px solid var(--ink); padding: 0 2px; white-space: nowrap; }
+
+.pigeon { position: absolute; transform: translate(-50%, -50%); width: 14px; height: 14px; padding: 0; border: 2px solid var(--accent); background: var(--paper); cursor: pointer; clip-path: polygon(0 50%, 45% 0, 55% 0, 100% 50%, 55% 100%, 45% 100%); }
+.pigeon--delivered { border-color: var(--land-edge); }
+.pigeon--lost { opacity: 0.45; border-color: var(--ink); }
+.pigeon--selected { outline: 2px solid var(--frame); outline-offset: 2px; }
+.pigeon-wing { position: absolute; inset: 3px 4px; background: var(--accent); animation: flap 0.4s steps(2) infinite; }
+.pigeon--in_flight { animation: bob 1.2s ease-in-out infinite; }
+@keyframes flap { from { transform: scaleY(1); } to { transform: scaleY(0.4); } }
+@keyframes bob { 0%,100% { margin-top: 0; } 50% { margin-top: -2px; } }
