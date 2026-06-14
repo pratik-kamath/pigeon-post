@@ -111,6 +111,7 @@ export function GoogleSignInButton({ onCredential }: { onCredential: (idToken: s
       const id = window.google?.accounts?.id;
       if (!id || !el) return;
       id.initialize({ client_id: clientId as string, callback: (r) => cbRef.current(r.credential) });
+      el.replaceChildren(); // idempotent: avoid a doubled button under React StrictMode's double-invoke
       id.renderButton(el, { theme: "filled_black", size: "large", text: "continue_with" });
     }
 
@@ -270,6 +271,8 @@ Then append:
 ```css
 /* Launch flourish: every sprite pops in on first mount; in-flight/selected add more above. */
 .pigeon { animation: pop 0.3s ease-out; }
+/* A selected in-flight pigeon should pop + bob + pulse (combined class beats either single). */
+.pigeon--in_flight.pigeon--selected { animation: pop 0.3s ease-out, bob 1.2s ease-in-out infinite 0.3s, pulse 0.9s ease-in-out infinite; }
 .pigeon:hover { transform: translate(-50%, -50%) scale(1.35); z-index: 3; }
 @keyframes pop { from { transform: translate(-50%, -50%) scale(0); } to { transform: translate(-50%, -50%) scale(1); } }
 @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(85, 102, 196, 0.6); } 50% { box-shadow: 0 0 0 4px rgba(85, 102, 196, 0); } }
@@ -409,7 +412,7 @@ cd backend
 CORS_ORIGINS=http://localhost:5173 FAST_FORWARD=5000 uvicorn app.main:app --reload
 ```
 
-Frontend tests: `npm test` (Vitest) · lint: `npm run lint` · build: `npm run build` · e2e smoke: `npm run test:e2e` (Playwright).
+Frontend tests: `npm test` (Vitest) · lint: `npm run lint` · build: `npm run build` · e2e smoke: `npm run test:e2e` (Playwright — first run once: `npx playwright install chromium`).
 
 The dashboard is a Pokémon-style pixel world map: log in (password or Google), send a pigeon, and watch it fly between cities in real time.
 ```
@@ -420,7 +423,13 @@ The dashboard is a Pokémon-style pixel world map: log in (password or Google), 
 ```
 And note the new env vars near the existing `GOOGLE_CLIENT_ID` line: `CORS_ORIGINS` (backend, comma-separated allowed origins) and the frontend `VITE_*` vars.
 
-- [ ] **Step 3: CLAUDE.md** — update the intro to note the frontend now exists, and add commands + gotchas. Change the intro's "Still to come" to:
+Also fix roadmap/status drift in `README.md` (keep edits factual and minimal): the Phase 1 line that says "in progress" → Phase 1 is complete (auth + account-tied messaging + the live pixel-map dashboard shipped); remove "Map view" from the Phase 3 *future* list (the world map exists now); and change the Node prerequisite wording from "for the frontend, when Phase 1 reaches the frontend milestones" to plainly "Node 20+ (for the frontend)". Update the project-layout note if it still calls `frontend/` a later milestone.
+
+- [ ] **Step 3: CLAUDE.md** — update the intro, the Architecture section, commands, and gotchas. First, under "## Architecture", replace the bullet `Frontend (React/Vite/TS) doesn't exist yet (later milestone).` with:
+```
+Frontend in `frontend/` — React + Vite + TS pixel-RPG dashboard (auth screens + live world map + send); Vitest/RTL tests, Playwright e2e smoke.
+```
+Then change the intro's "Still to come" to:
 ```
 The frontend exists: a React/Vite/TS pixel-RPG dashboard (`frontend/`) with a live world map.
 ```
