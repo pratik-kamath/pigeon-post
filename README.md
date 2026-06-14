@@ -60,10 +60,10 @@ FAST_FORWARD=5000 uvicorn app.main:app --reload  # NYC → SF lands in ~37s
 - `POST /auth/refresh` — `{refresh_token}` → rotated token pair (old one is revoked)
 - `POST /auth/logout` — `{refresh_token}` revoked
 - `GET /auth/me` — current user (send `Authorization: Bearer <access_token>`)
-- `POST /messages` — send a pigeon: `{sender, recipient, body, origin, destination}` (city names from the built-in catalog, see `app/cities.py`)
-- `GET /messages/{id}` — track one message
-- `GET /messages?sender=NAME` — everything you've sent, any status
-- `GET /messages?recipient=NAME` — your inbox (delivered messages only)
+- `POST /messages` — send a pigeon (auth required): `{recipient, body, origin, destination}`. `recipient` is a registered **username**; unknown → 404. Sender is taken from your access token. City names come from the built-in catalog (see `app/cities.py`).
+- `GET /messages/inbox` — your inbox: delivered messages addressed to you (auth required)
+- `GET /messages/sent` — everything you've sent, any status (auth required)
+- `GET /messages/{id}` — track one message; visible only to its sender and recipient (auth required)
 
 Set `JWT_SECRET` in real deployments; a dev default is baked in. Access tokens
 last 15 minutes — use `/auth/refresh` to stay logged in.

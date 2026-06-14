@@ -1,6 +1,6 @@
 # Pigeon Post
 
-Fun-and-learn messaging app where messages travel at real pigeon flight speed. Personal learning project, built in small phased milestones (roadmap in README). Phase 1 in progress — the messaging core exists (message model, send/track/inbox endpoints, APScheduler delivery sweep) and password auth with a JWT access/refresh pair (`/auth/*`). Still to come: messages tied to user accounts, Google OAuth, and the frontend.
+Fun-and-learn messaging app where messages travel at real pigeon flight speed. Personal learning project, built in small phased milestones (roadmap in README). Phase 1 in progress — the messaging core exists (message model, send/track/inbox endpoints, APScheduler delivery sweep) and password auth with a JWT access/refresh pair (`/auth/*`). Messages are now tied to user accounts (sent by the authenticated user, addressed to a registered username). Still to come: Google OAuth and the frontend.
 
 ## Commands
 
@@ -32,3 +32,5 @@ uvicorn app.main:app --reload         # dev server :8000, docs at /docs
 - `FAST_FORWARD` only affects newly sent messages: `arrival_at` is fixed at send time and the sweep never reads the env var.
 - The app is single-process/dev-only: multiple uvicorn workers would each run their own delivery scheduler.
 - Refresh tokens rotate on every use; replaying an old one revokes all of a user's tokens (reuse detection). Tests that refresh twice must use the newest token.
+- All `/messages` endpoints require a bearer access token. The sender is always the token's user (any `sender` in the body is ignored); the recipient is looked up by username (case-insensitive) and must exist.
+- SQLite enforces foreign keys only because of the `Engine`-level `PRAGMA foreign_keys=ON` listener in `db.py`; without it the `Message` → `User` FKs would be silently unenforced.
