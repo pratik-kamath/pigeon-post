@@ -89,3 +89,7 @@ body {
 .pigeon--in_flight { animation: bob 1.2s ease-in-out infinite; }
 @keyframes flap { from { transform: scaleY(1); } to { transform: scaleY(0.4); } }
 @keyframes bob { 0%,100% { margin-top: 0; } 50% { margin-top: -2px; } }
+
+.pk-map { position: relative; width: 100%; aspect-ratio: 2 / 1; background: var(--sea); border: 3px solid var(--ink); overflow: hidden; }
+.tile { position: absolute; background: var(--land); }
+.flight-paths { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }

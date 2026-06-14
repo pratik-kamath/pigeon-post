@@ -1,5 +1,12 @@
 import "@testing-library/jest-dom/vitest";
 
+if (!globalThis.requestAnimationFrame) {
+  globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) =>
+    setTimeout(() => cb(Date.now()), 16) as unknown as number) as typeof requestAnimationFrame;
+  globalThis.cancelAnimationFrame = ((id: number) =>
+    clearTimeout(id as unknown as ReturnType<typeof setTimeout>)) as typeof cancelAnimationFrame;
+}
+
 // Node 25 ships a native but incomplete `localStorage` global (no `.clear()`).
 // Vitest's jsdom environment intentionally skips overriding keys that already
 // exist in the Node global unless they're in its explicit allow-list, so
