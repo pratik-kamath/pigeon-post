@@ -34,10 +34,13 @@ export function AuthScreen() {
 
   async function onGoogleCredential(idToken: string) {
     setError(null);
+    setBusy(true);
     try {
       await loginWithGoogle(idToken);
     } catch {
       setError("Google sign-in failed.");
+    } finally {
+      setBusy(false);
     }
   }
 
