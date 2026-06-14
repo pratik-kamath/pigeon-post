@@ -1,4 +1,5 @@
-import { AuthProvider, useAuth } from "./auth/AuthContext";
+import { AuthProvider } from "./auth/AuthContext";
+import { useAuth } from "./auth/useAuth";
 
 function Shell() {
   const { status, user } = useAuth();

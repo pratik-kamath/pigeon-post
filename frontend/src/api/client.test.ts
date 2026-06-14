@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { apiFetch, onLogout } from "./client";
 import { tokens } from "./tokens";
 

@@ -1,39 +1,29 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import * as authApi from "../api/auth";
 import type { User } from "../api/auth";
 import { onLogout } from "../api/client";
 import { tokens } from "../api/tokens";
-
-type Status = "loading" | "anonymous" | "authenticated";
-
-interface AuthValue {
-  user: User | null;
-  status: Status;
-  login: (email: string, password: string) => Promise<void>;
-  register: (username: string, email: string, password: string) => Promise<void>;
-  loginWithGoogle: (idToken: string) => Promise<void>;
-  logout: () => void;
-}
-
-const Ctx = createContext<AuthValue | null>(null);
-export const useAuth = () => {
-  const v = useContext(Ctx);
-  if (!v) throw new Error("useAuth must be used within AuthProvider");
-  return v;
-};
+import { AuthContext, type AuthValue, type Status } from "./useAuth";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [status, setStatus] = useState<Status>("loading");
+  // Initialize synchronously so we don't setState in the effect body for the
+  // no-token path (satisfies react-hooks/set-state-in-effect).
+  const [status, setStatus] = useState<Status>(tokens.access ? "loading" : "anonymous");
 
   function applyUser(u: User) { setUser(u); setStatus("authenticated"); }
   function goAnon() { setUser(null); setStatus("anonymous"); }
 
   useEffect(() => {
-    const unsubscribe = onLogout(() => { tokens.clear(); goAnon(); });
-    if (tokens.access) authApi.me().then(applyUser).catch(goAnon);
-    else goAnon();
-    return unsubscribe;
+    let active = true; // guard against setState after unmount (StrictMode remount)
+    const unsubscribe = onLogout(() => { tokens.clear(); if (active) goAnon(); });
+    if (tokens.access) {
+      authApi
+        .me()
+        .then((u) => { if (active) applyUser(u); })
+        .catch(() => { if (active) goAnon(); });
+    }
+    return () => { active = false; unsubscribe(); };
   }, []);
 
   const value: AuthValue = {
@@ -44,5 +34,5 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loginWithGoogle: async (t) => applyUser(await authApi.googleLogin(t)),
     logout: () => { authApi.logout(); goAnon(); },
   };
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
