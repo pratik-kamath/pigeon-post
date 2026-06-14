@@ -8,20 +8,20 @@ This is a personal learning project — not production software. The codebase is
 
 **Backend:** Python 3.12 · FastAPI · SQLAlchemy · SQLite · APScheduler
 
-**Frontend (Phase 1):** React · Vite · TypeScript
+**Frontend:** React · Vite · TypeScript
 
 ## Roadmap
 
-- **Phase 1 — Core mechanic (in progress).** Auth, send messages, scheduled arrival with chance of being lost, inbox, live progress dashboard.
+- **Phase 1 — Core mechanic (complete).** Auth, send messages, scheduled arrival with chance of being lost, inbox, live pixel-map dashboard.
 - **Phase 2 — Gamification.** Named pigeons with stats, leveling, feeding, training mini-games.
-- **Phase 3 — Polish.** Map view, notifications, real-time updates via WebSockets, richer delivery reports.
+- **Phase 3 — Polish.** Notifications, real-time updates via WebSockets, richer delivery reports.
 
 ## Getting started
 
 ### Prerequisites
 
 - [pyenv](https://github.com/pyenv/pyenv) (or any way to get Python 3.12)
-- Node.js 20+ (for the frontend, when Phase 1 reaches the frontend milestones)
+- Node.js 20+ (for the frontend)
 
 ### Backend setup
 
@@ -61,6 +61,7 @@ FAST_FORWARD=5000 uvicorn app.main:app --reload  # NYC → SF lands in ~37s
 - `POST /auth/refresh` — `{refresh_token}` → rotated token pair (old one is revoked)
 - `POST /auth/logout` — `{refresh_token}` revoked
 - `GET /auth/me` — current user (send `Authorization: Bearer <access_token>`)
+- `GET /cities` — the city catalog `[{name, lat, lon}]` (public; used by the map and send form)
 - `POST /messages` — send a pigeon (auth required): `{recipient, body, origin, destination}`. `recipient` is a registered **username**; unknown → 404. Sender is taken from your access token. City names come from the built-in catalog (see `app/cities.py`).
 - `GET /messages/inbox` — your inbox: delivered messages addressed to you (auth required)
 - `GET /messages/sent` — everything you've sent, any status (auth required)
@@ -68,7 +69,10 @@ FAST_FORWARD=5000 uvicorn app.main:app --reload  # NYC → SF lands in ~37s
 
 Set `JWT_SECRET` in real deployments; a dev default is baked in. Access tokens
 last 15 minutes — use `/auth/refresh` to stay logged in. Set `GOOGLE_CLIENT_ID`
-(your Google OAuth client ID) to enable `POST /auth/google`.
+(your Google OAuth client ID) to enable `POST /auth/google`. Set `CORS_ORIGINS`
+(comma-separated, e.g. `http://localhost:5173`) to allow the frontend origin.
+
+Frontend env vars (in `frontend/.env`): `VITE_API_BASE_URL` (defaults to `http://localhost:8000`) and `VITE_GOOGLE_CLIENT_ID` (same OAuth client ID, enables the Google sign-in button).
 
 ### Running tests
 
@@ -77,6 +81,27 @@ cd backend
 source .venv/bin/activate
 pytest
 ```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+cp .env.example .env   # set VITE_API_BASE_URL (default http://localhost:8000)
+                       # and VITE_GOOGLE_CLIENT_ID (optional, enables Google sign-in)
+npm run dev            # Vite dev server, http://localhost:5173
+```
+
+The dev server expects the backend running with CORS allowing the frontend origin:
+
+```bash
+cd backend
+CORS_ORIGINS=http://localhost:5173 FAST_FORWARD=5000 uvicorn app.main:app --reload
+```
+
+Frontend tests: `npm test` (Vitest) · lint: `npm run lint` · build: `npm run build` · e2e smoke: `npm run test:e2e` (Playwright — first run once: `npx playwright install chromium`).
+
+The dashboard is a Pokémon-style pixel world map: log in (password or Google), send a pigeon, and watch it fly between cities in real time.
 
 ## Project layout
 
@@ -88,7 +113,7 @@ pigeon-post/
 │   ├── requirements.txt      Runtime dependencies
 │   ├── requirements-dev.txt  Dev/test dependencies (includes runtime)
 │   └── .python-version       pyenv-pinned Python version
-├── frontend/                 React + Vite + TypeScript (Phase 1, later milestones)
+├── frontend/                 React + Vite + TypeScript pixel-RPG dashboard
 └── README.md
 ```
 
