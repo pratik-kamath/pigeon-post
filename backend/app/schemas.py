@@ -9,13 +9,12 @@ from app.cities import CITIES
 
 
 class MessageCreate(BaseModel):
-    sender: str = Field(max_length=50)
     recipient: str = Field(max_length=50)
     body: str = Field(min_length=1, max_length=500)
     origin: str
     destination: str
 
-    @field_validator("sender", "recipient", "body")
+    @field_validator("recipient", "body")
     @classmethod
     def not_blank(cls, value: str) -> str:
         value = value.strip()

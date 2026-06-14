@@ -10,7 +10,7 @@ from app.delivery import (
     loss_probability,
     resolve_due_messages,
 )
-from app.models import DELIVERED, IN_FLIGHT, LOST, Message
+from app.models import DELIVERED, IN_FLIGHT, LOST, Message, User
 
 
 def test_flight_duration_at_pigeon_speed(monkeypatch):
@@ -53,10 +53,25 @@ def test_loss_probability_is_capped():
 NOW = datetime(2026, 6, 11, 12, 0, 0)
 
 
+def _ensure_users(db_session):
+    sender = db_session.query(User).filter_by(username="sender").one_or_none()
+    if sender is None:
+        sender = User(username="sender", email="sender@example.com",
+                      password_hash="x", created_at=NOW)
+        recipient = User(username="recipient", email="recipient@example.com",
+                         password_hash="x", created_at=NOW)
+        db_session.add_all([sender, recipient])
+        db_session.commit()
+        return sender.id, recipient.id
+    recipient = db_session.query(User).filter_by(username="recipient").one()
+    return sender.id, recipient.id
+
+
 def make_message(db_session, *, arrival_at, status=IN_FLIGHT, distance_km=4130.0):
+    sender_id, recipient_id = _ensure_users(db_session)
     message = Message(
-        sender="pratik",
-        recipient="alex",
+        sender_id=sender_id,
+        recipient_id=recipient_id,
         body="hello",
         origin="new york",
         destination="san francisco",

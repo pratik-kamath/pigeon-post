@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import (
     CheckConstraint, DateTime, Float, ForeignKey, Index, String, text,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
 
@@ -16,8 +16,8 @@ class Message(Base):
     __tablename__ = "messages"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    sender: Mapped[str] = mapped_column(String(50), index=True)
-    recipient: Mapped[str] = mapped_column(String(50))
+    sender_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    recipient_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     body: Mapped[str] = mapped_column(String(500))
     origin: Mapped[str] = mapped_column(String(50))
     destination: Mapped[str] = mapped_column(String(50))
@@ -29,13 +29,27 @@ class Message(Base):
         DateTime(timezone=False), nullable=True
     )
 
+    sender_user: Mapped["User"] = relationship(foreign_keys=[sender_id])
+    recipient_user: Mapped["User"] = relationship(foreign_keys=[recipient_id])
+
+    @property
+    def sender(self) -> str:
+        return self.sender_user.username
+
+    @property
+    def recipient(self) -> str:
+        return self.recipient_user.username
+
     __table_args__ = (
         CheckConstraint(
             "status IN ('in_flight', 'delivered', 'lost')",
             name="ck_messages_status",
         ),
+        CheckConstraint(
+            "sender_id <> recipient_id", name="ck_messages_distinct_parties"
+        ),
         Index("ix_messages_status_arrival_at", "status", "arrival_at"),
-        Index("ix_messages_recipient_status", "recipient", "status"),
+        Index("ix_messages_recipient_id_status", "recipient_id", "status"),
     )
 
 
