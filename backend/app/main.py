@@ -5,8 +5,10 @@ from fastapi import FastAPI
 
 from app import db, models  # noqa: F401  — models registers tables on Base.metadata
 from app.auth_routes import router as auth_router
+from app.cities import CITIES
 from app.delivery import resolve_due_messages
 from app.routes import router
+from app.schemas import CityOut
 
 SWEEP_INTERVAL_SECONDS = 5
 
@@ -48,6 +50,13 @@ def create_app(start_scheduler: bool = True, create_tables: bool = True) -> Fast
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/cities", response_model=list[CityOut], tags=["meta"])
+    def cities() -> list[CityOut]:
+        return [
+            CityOut(name=name, lat=lat, lon=lon)
+            for name, (lat, lon) in sorted(CITIES.items())
+        ]
 
     app.include_router(router)
     app.include_router(auth_router)

@@ -111,3 +111,9 @@ class UserOut(BaseModel):
     username: str
     email: str
     created_at: datetime
+
+
+class CityOut(BaseModel):
+    name: str
+    lat: float
+    lon: float
