@@ -14,7 +14,7 @@ test("isLand returns a boolean and the poles/oceans are sea", () => {
 test("there is some land and some sea", () => {
   let land = 0, sea = 0;
   for (let r = 0; r < GRID_ROWS; r++)
-    for (let c = 0; c < GRID_COLS; c++) (isLand(c, r) ? land++ : sea++);
+    for (let c = 0; c < GRID_COLS; c++) if (isLand(c, r)) land++; else sea++;
   expect(land).toBeGreaterThan(0);
   expect(sea).toBeGreaterThan(0);
 });
