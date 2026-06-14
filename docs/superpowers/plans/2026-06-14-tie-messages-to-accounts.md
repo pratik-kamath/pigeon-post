@@ -60,9 +60,11 @@ Expected: FAIL — `assert 0 == 1` (pragma defaults off on the test engine).
 
 - [ ] **Step 3: Add the Engine-level listener**
 
-In `backend/app/db.py`, add the import and a new listener. After the existing imports, add `Engine`:
+In `backend/app/db.py`, add the imports and a new listener. Add `sqlite3` and `Engine`:
 
 ```python
+import sqlite3
+
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
@@ -73,11 +75,12 @@ Then, below the existing `_enable_wal` listener, add:
 ```python
 @event.listens_for(Engine, "connect")
 def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record):
-    # SQLite needs this per-connection; Engine-level so every engine (prod and
-    # the per-test engines) enforces FKs. WAL stays on the prod engine above.
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
+    # Engine-level so every engine (prod and the per-test engines) enforces FKs.
+    # Guard for SQLite only — this listener fires for ANY engine in the process.
+    if isinstance(dbapi_connection, sqlite3.Connection):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -144,6 +147,17 @@ def send(client, token, *, recipient="alex", **overrides):
     }
     payload.update(overrides)
     return client.post("/messages", json=payload, headers=auth(token))
+
+
+def send_ok(client, token, **overrides):
+    """Send and assert it was created, returning the new message id.
+
+    Asserting 201 up front means a broken send path fails on the status code
+    (clear) instead of a later KeyError on ["id"] (noise).
+    """
+    resp = send(client, token, **overrides)
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
 
 
 def set_status(db_session, message_id, status):
@@ -233,7 +247,7 @@ def test_blank_body_rejected(client):
 def test_sender_can_track_in_any_state(client, db_session):
     register(client, "alex")
     token = register(client, "pratik")
-    message_id = send(client, token).json()["id"]
+    message_id = send_ok(client, token)
     set_status(db_session, message_id, LOST)
     resp = client.get(f"/messages/{message_id}", headers=auth(token))
     assert resp.status_code == 200
@@ -243,7 +257,7 @@ def test_sender_can_track_in_any_state(client, db_session):
 def test_recipient_can_track_in_any_state(client, db_session):
     alex = register(client, "alex")
     token = register(client, "pratik")
-    message_id = send(client, token).json()["id"]  # still in flight
+    message_id = send_ok(client, token)  # still in flight
     resp = client.get(f"/messages/{message_id}", headers=auth(alex))
     assert resp.status_code == 200
     assert resp.json()["status"] == "in_flight"
@@ -253,7 +267,7 @@ def test_non_party_gets_404(client):
     register(client, "alex")
     token = register(client, "pratik")
     zoe = register(client, "zoe")
-    message_id = send(client, token).json()["id"]
+    message_id = send_ok(client, token)
     assert client.get(f"/messages/{message_id}", headers=auth(zoe)).status_code == 404
 
 
@@ -265,8 +279,16 @@ def test_track_unknown_message_404(client):
 def test_track_requires_auth(client):
     register(client, "alex")
     token = register(client, "pratik")
-    message_id = send(client, token).json()["id"]
+    message_id = send_ok(client, token)
     assert client.get(f"/messages/{message_id}").status_code == 401
+
+
+def test_old_query_param_listing_is_gone(client):
+    # The leaky GET /messages?recipient=NAME endpoint was removed; only POST
+    # lives at that path, so GET must not return anyone's mail.
+    token = register(client, "pratik")
+    resp = client.get("/messages", params={"recipient": "pratik"}, headers=auth(token))
+    assert resp.status_code == 405
 
 
 # --- GET /messages/inbox ----------------------------------------------------
@@ -274,9 +296,9 @@ def test_track_requires_auth(client):
 def test_inbox_shows_only_my_delivered_newest_first(client, db_session):
     alex = register(client, "alex")
     token = register(client, "pratik")
-    in_flight = send(client, token).json()["id"]            # stays in flight
-    first = send(client, token, body="one").json()["id"]
-    second = send(client, token, body="two").json()["id"]
+    in_flight = send_ok(client, token)                      # stays in flight
+    first = send_ok(client, token, body="one")
+    second = send_ok(client, token, body="two")
     set_status(db_session, first, DELIVERED)
     set_status(db_session, second, DELIVERED)
 
@@ -286,15 +308,14 @@ def test_inbox_shows_only_my_delivered_newest_first(client, db_session):
 
 
 def test_inbox_is_scoped_to_me(client, db_session):
-    register(client, "alex")
+    alex = register(client, "alex")
     token = register(client, "pratik")
     zoe = register(client, "zoe")
-    mine = send(client, token, recipient="zoe").json()["id"]
+    mine = send_ok(client, token, recipient="zoe")
     set_status(db_session, mine, DELIVERED)
-    # alex has no delivered mail; zoe has one.
+    # zoe sees the delivered message; alex (no delivered mail) sees nothing.
     assert client.get("/messages/inbox", headers=auth(zoe)).json()[0]["id"] == mine
-    alex_token = register(client, "alex2")
-    assert client.get("/messages/inbox", headers=auth(alex_token)).json() == []
+    assert client.get("/messages/inbox", headers=auth(alex)).json() == []
 
 
 def test_inbox_requires_auth(client):
@@ -306,8 +327,8 @@ def test_inbox_requires_auth(client):
 def test_sent_shows_all_my_statuses_newest_first(client, db_session):
     register(client, "alex")
     token = register(client, "pratik")
-    first = send(client, token).json()["id"]
-    second = send(client, token, body="second").json()["id"]
+    first = send_ok(client, token)
+    second = send_ok(client, token, body="second")
     set_status(db_session, first, LOST)  # still shows in sent
     sent = client.get("/messages/sent", headers=auth(token)).json()
     assert [m["id"] for m in sent] == [second, first]
@@ -319,7 +340,7 @@ def test_sent_is_scoped_to_me(client):
     register(client, "alex")
     token = register(client, "pratik")
     zoe = register(client, "zoe")
-    send(client, token).json()
+    send_ok(client, token)
     assert client.get("/messages/sent", headers=auth(zoe)).json() == []
 
 
@@ -497,6 +518,8 @@ class Message(Base):
 Run: `cd backend && pytest tests/test_models.py tests/test_delivery.py -q`
 Expected: PASS.
 
+> The **full** suite is intentionally still red here — `tests/test_messages_api.py` fails because `schemas.py`/`routes.py` aren't updated yet (the route still builds `Message(sender=...)` and the old read queries reference the removed columns). Run only the two files above at this checkpoint; the single green commit for this task comes after Step 7.
+
 ### Step 5: Implement the schema change
 
 - [ ] In `backend/app/schemas.py`, update `MessageCreate` (lines 11-40): remove the `sender` field and drop `sender` from the `not_blank` validator decorator. Result:
@@ -648,7 +671,16 @@ def get_message(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    message = db.get(models.Message, message_id)
+    message = db.get(
+        models.Message,
+        message_id,
+        # Eager-load both parties so MessageOut resolves usernames without a
+        # lazy load, consistent with the inbox/sent endpoints.
+        options=[
+            joinedload(models.Message.sender_user),
+            joinedload(models.Message.recipient_user),
+        ],
+    )
     if message is None or current_user.id not in (
         message.sender_id,
         message.recipient_id,
@@ -663,9 +695,15 @@ def get_message(
 Run: `cd backend && pytest -q`
 Expected: PASS — every test green.
 
-- [ ] **Step 8: Sanity-check the live app**
+- [ ] **Step 8: Reset the dev DB, then sanity-check the live app**
 
-Run: `cd backend && FAST_FORWARD=5000 uvicorn app.main:app --reload` then, in another shell, register two users, send between them, and hit `/messages/inbox`/`/messages/sent` (or just open `/docs`). Confirm `POST /messages` 401s without a token and 404s for an unknown recipient. Stop the server when done.
+The existing `backend/pigeon.db` was created with the old `sender`/`recipient` columns, and `create_all` never ALTERs an existing table — so the running app would error on `sender_id`. It's a gitignored dev throwaway, so delete it (and its WAL/SHM sidecars) first:
+
+```bash
+cd backend && rm -f pigeon.db pigeon.db-wal pigeon.db-shm
+```
+
+Then run `FAST_FORWARD=5000 uvicorn app.main:app --reload` and, in another shell (or via `/docs`), register two users, send between them, and hit `/messages/inbox` and `/messages/sent`. Confirm `POST /messages` 401s without a token and 404s for an unknown recipient. Stop the server when done.
 
 - [ ] **Step 9: Commit**
 
