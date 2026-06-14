@@ -121,6 +121,7 @@ def _patch_verify(monkeypatch, result=None, exc=None):
     def fake_verify(token, transport, audience):
         if exc is not None:
             raise exc
+        assert audience == CLIENT_ID  # the seam must pass our client id as the aud
         return result
     monkeypatch.setattr(
         google_auth.google_id_token, "verify_oauth2_token", fake_verify
@@ -174,7 +175,7 @@ def test_missing_sub_or_email_rejected(monkeypatch):
         verify_google_id_token("tok")
 
 
-@pytest.mark.parametrize("value", ["true", "false", 1, 0, None, "True"])
+@pytest.mark.parametrize("value", ["true", "false", 1, 0, None, "True", False])
 def test_email_verified_is_strict(monkeypatch, value):
     _patch_verify(monkeypatch, result=_claims(email_verified=value))
     assert verify_google_id_token("tok").email_verified is False
@@ -254,6 +255,7 @@ def verify_google_id_token(token: str) -> GoogleIdentity:
 
 Run: `cd backend && .venv/bin/python -m pytest tests/test_google_auth.py -q`
 Expected: PASS (all cases including the parametrized strict-`email_verified` ones).
+Then run the full suite to confirm nothing else broke: `cd backend && .venv/bin/python -m pytest -q` → all green.
 
 - [ ] **Step 5: Commit**
 
@@ -322,6 +324,18 @@ def test_falls_back_to_name_when_seed_too_short(db_session):
 def test_empty_seed_falls_back_to_pigeon(db_session):
     # non-ASCII local part sanitizes to empty, no usable name
     assert _generate_username(db_session, "区@example.com", None) == "pigeon"
+
+
+def test_collision_is_case_insensitive(db_session):
+    _seed(db_session, "Alex")  # stored mixed-case; collides case-insensitively
+    assert _generate_username(db_session, "alex@example.com", None) == "alex1"
+
+
+def test_suffix_keeps_length_within_30(db_session):
+    _seed(db_session, "a" * 30)
+    result = _generate_username(db_session, "a" * 40 + "@example.com", None)
+    assert len(result) <= 30
+    assert result != "a" * 30
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -366,6 +380,7 @@ def _generate_username(db: Session, email: str, name: str | None) -> str:
 
 Run: `cd backend && .venv/bin/python -m pytest tests/test_username.py -q`
 Expected: PASS.
+Then run the full suite: `cd backend && .venv/bin/python -m pytest -q` → all green.
 
 - [ ] **Step 5: Commit**
 
@@ -399,14 +414,20 @@ def patch_identity(monkeypatch, *, sub="sub-123", email="alex@example.com",
                    email_verified=True, name="Alex Example"):
     identity = GoogleIdentity(sub=sub, email=email,
                               email_verified=email_verified, name=name)
-    monkeypatch.setattr(auth_routes, "verify_google_id_token", lambda token: identity)
+    # raising=False: in the red phase auth_routes hasn't imported the seam yet
+    # (that happens in Task 4 Step 4), so the attribute doesn't exist. raising=False
+    # lets the patch create it, so the red run fails on the missing route (404),
+    # not an AttributeError at setup.
+    monkeypatch.setattr(
+        auth_routes, "verify_google_id_token", lambda token: identity, raising=False
+    )
     return identity
 
 
 def patch_raises(monkeypatch, exc):
     def boom(token):
         raise exc
-    monkeypatch.setattr(auth_routes, "verify_google_id_token", boom)
+    monkeypatch.setattr(auth_routes, "verify_google_id_token", boom, raising=False)
 
 
 def google_login(client, id_token="tok"):
@@ -431,8 +452,8 @@ def test_new_user_created_and_logged_in(client, monkeypatch, db_session):
 
 def test_returning_user_no_duplicate(client, monkeypatch, db_session):
     patch_identity(monkeypatch, sub="sub-xyz", email="rep@example.com")
-    google_login(client)
-    google_login(client)
+    assert google_login(client).status_code == 200
+    assert google_login(client).status_code == 200
     assert db_session.query(User).filter(User.google_sub == "sub-xyz").count() == 1
 
 
@@ -446,6 +467,10 @@ def test_links_to_existing_password_account(client, monkeypatch, db_session):
     user = db_session.query(User).filter(User.email == "alex@example.com").one()
     assert user.google_sub == "sub-link"
     assert db_session.query(User).count() == 1
+    # the original password still works after linking
+    pw = client.post("/auth/login",
+                     json={"email": "alex@example.com", "password": "password123"})
+    assert pw.status_code == 200
 
 
 def test_unverified_email_rejected(client, monkeypatch, db_session):
@@ -456,7 +481,7 @@ def test_unverified_email_rejected(client, monkeypatch, db_session):
 
 def test_different_google_sub_same_email_conflict(client, monkeypatch, db_session):
     patch_identity(monkeypatch, sub="sub-A", email="dup@example.com")
-    google_login(client)
+    assert google_login(client).status_code == 200
     patch_identity(monkeypatch, sub="sub-B", email="dup@example.com")
     assert google_login(client).status_code == 401
     user = db_session.query(User).filter(User.email == "dup@example.com").one()
@@ -473,15 +498,20 @@ def test_unavailable_503(client, monkeypatch):
     assert google_login(client).status_code == 503
 
 
+def test_missing_config_500(client, monkeypatch):
+    patch_raises(monkeypatch, RuntimeError("GOOGLE_CLIENT_ID is not configured"))
+    assert google_login(client).status_code == 500
+
+
 def test_blank_id_token_422(client):
     assert client.post("/auth/google", json={"id_token": ""}).status_code == 422
 
 
 def test_username_collision_distinct_handles(client, monkeypatch, db_session):
     patch_identity(monkeypatch, sub="sub-1", email="sam@example.com")
-    google_login(client)
+    assert google_login(client).status_code == 200
     patch_identity(monkeypatch, sub="sub-2", email="sam@other.com")
-    google_login(client)
+    assert google_login(client).status_code == 200
     names = {u.username for u in db_session.query(User).all()}
     assert "sam" in names and "sam1" in names
 ```
@@ -489,7 +519,7 @@ def test_username_collision_distinct_handles(client, monkeypatch, db_session):
 - [ ] **Step 2: Run the route tests to verify they fail**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/test_google_auth_api.py -q`
-Expected: FAIL — `404` on `POST /auth/google` (route not defined) / `ImportError` for `GoogleLoginIn` once wired. Confirm failures are behavioral, not collection errors.
+Expected: FAIL — the route doesn't exist yet, so `POST /auth/google` returns `404` (assertions expecting 200/401/503/500/422 fail). Because the seam patch uses `raising=False`, there is NO `AttributeError` at setup — the failures are behavioral, not collection errors.
 
 - [ ] **Step 3: Add the request schema**
 

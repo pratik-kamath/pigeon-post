@@ -111,8 +111,8 @@ def verify_google_id_token(token: str) -> GoogleIdentity:
 
 ### `_generate_username(db, email, name)` — in `auth_routes.py` (needs DB)
 
-- Seed: email local part (`email.split("@", 1)[0]`); if it sanitizes to empty, fall back to `name`, then the literal `"pigeon"`.
-- Sanitize: drop anything outside `[a-zA-Z0-9_]`, lowercase, clamp to 30 chars; if under 3 chars, pad (e.g. append `"pigeon"`) and re-clamp.
+- Seed: email local part (`email.split("@", 1)[0]`), sanitized. If it sanitizes to **fewer than 3 chars**, fall back to `name` (sanitized). If still under 3 chars, pad by appending `"pigeon"`.
+- Sanitize: drop anything outside `[a-zA-Z0-9_]`, lowercase, clamp to 30 chars.
 - Uniqueness: if the candidate already exists (case-insensitive, against `ux_users_username_lower`), append `1`, `2`, … keeping the result ≤ 30 by trimming the base to `30 - len(str(n))` before adding the suffix, until free.
 - The unique index is the backstop; on the rare race where a concurrently-created row takes the chosen handle, the `flush()` in the route raises `IntegrityError` and the request fails loudly (single-process dev makes this effectively impossible).
 
