@@ -6,7 +6,7 @@
 
 **Architecture:** A new `frontend/` (Vite + React + TS, Vitest + React Testing Library). Backend gains a public `GET /cities` and `CORSMiddleware`. The frontend's correctness-critical logic lives in small pure modules (`projection`, `flight`, `time`) and an API client whose `401 → refresh → retry` uses a single shared promise so concurrent requests can't trip the backend's refresh-token reuse detection.
 
-**Tech Stack:** Backend: FastAPI/SQLAlchemy/pytest (existing). Frontend: Vite, React 18, TypeScript, Vitest, @testing-library/react, jsdom, @fontsource/{press-start-2p,vt323}.
+**Tech Stack:** Backend: FastAPI/SQLAlchemy/pytest (existing). Frontend: Vite + React + TypeScript (whatever `create-vite`'s `react-ts` template ships — React 18 or 19; the code uses no version-specific APIs), Vitest, @testing-library/react, jsdom, @fontsource/{press-start-2p,vt323}. Exact versions are pinned by the committed `package-lock.json` once scaffolded.
 
 **Spec:** `docs/superpowers/specs/2026-06-14-frontend-dashboard-mvp-design.md` (this plan implements **Phase 1** of its Build order). Phases 2–3 get their own plans.
 
@@ -33,7 +33,7 @@
 | `frontend/src/auth/AuthContext.tsx` | Create | token storage + auth state. |
 | `frontend/src/App.tsx` | Modify | minimal auth-gated shell (placeholder until Phase 2). |
 
-**Phase-1 done = green when:** backend pytest passes with the two new tests; `npm test` (Vitest) passes; `npm run build` succeeds; `npm run dev` boots to a placeholder that reflects logged-out state.
+**Phase-1 done = green when:** backend pytest passes with the two new tests; `npm test` (Vitest) passes (incl. the `App` RTL test that renders the logged-out shell — the automated render smoke); `npm run build` succeeds. A manual `npm run dev` boot is an optional sanity check; the real end-to-end visual smoke (Playwright) arrives in Phase 3.
 
 ---
 
@@ -122,16 +122,47 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - [ ] **Step 1: Write the failing test** — create `backend/tests/test_cors.py`:
 
 ```python
-def test_cors_reflects_configured_origin(client):
-    resp = client.get("/health", headers={"Origin": "http://localhost:5173"})
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import sessionmaker
+
+from app.db import get_db
+from app.main import create_app
+
+
+@pytest.fixture()
+def cors_client(monkeypatch, test_engine):
+    # Set the env BEFORE create_app reads it (origins are parsed at app build,
+    # so the shared `client` fixture — built during setup — can't be reconfigured
+    # in the test body, and ambient CORS_ORIGINS must not leak in).
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost:5173")
+    TestingSession = sessionmaker(
+        bind=test_engine, autoflush=False, expire_on_commit=False
+    )
+    app = create_app(start_scheduler=False, create_tables=False)
+
+    def override_get_db():
+        db = TestingSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    return TestClient(app)
+
+
+def test_cors_reflects_configured_origin(cors_client):
+    resp = cors_client.get("/health", headers={"Origin": "http://localhost:5173"})
     assert resp.status_code == 200
     assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173"
 
 
-def test_cors_omits_unknown_origin(client):
-    resp = client.get("/health", headers={"Origin": "http://evil.example"})
+def test_cors_omits_unknown_origin(cors_client):
+    resp = cors_client.get("/health", headers={"Origin": "http://evil.example"})
     assert resp.status_code == 200
-    assert resp.headers.get("access-control-allow-origin") != "http://evil.example"
+    # Locked origins: an unknown origin gets NO allow-origin header (never "*").
+    assert resp.headers.get("access-control-allow-origin") is None
 ```
 
 - [ ] **Step 2: Run it — expect FAIL**
@@ -191,6 +222,8 @@ cd /Users/pratikkamath/Github-Projects/pigeon-post
 npm create vite@latest frontend -- --template react-ts
 cd frontend && npm install
 ```
+
+(The exact React/Vite/TS versions are whatever the `react-ts` template ships today; they get locked into `package-lock.json`, committed in Step 8, so the build is reproducible from then on. The later steps overwrite `vite.config.ts`, set scripts explicitly, and *merge* into `tsconfig.app.json` — so the plan doesn't depend on template-specific layout.)
 
 - [ ] **Step 2: Add test + font deps**
 
@@ -499,6 +532,18 @@ test("respects fractional seconds without offset", () => {
   const d = parseServerUtc("2026-06-14T10:00:00.500000");
   expect(d.getTime()).toBe(Date.UTC(2026, 5, 14, 10, 0, 0, 500));
 });
+
+test("respects a positive UTC offset", () => {
+  expect(parseServerUtc("2026-06-14T20:00:00+10:00").getTime()).toBe(
+    Date.UTC(2026, 5, 14, 10, 0, 0)
+  );
+});
+
+test("respects a negative UTC offset", () => {
+  expect(parseServerUtc("2026-06-14T06:00:00-04:00").getTime()).toBe(
+    Date.UTC(2026, 5, 14, 10, 0, 0)
+  );
+});
 ```
 
 - [ ] **Step 2: Run — expect FAIL** (`cd frontend && npm test`).
@@ -730,7 +775,7 @@ test("attaches the bearer token", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ ok: true }));
   await apiFetch("/messages/sent");
   const init = fetchMock.mock.calls[0][1]!;
-  expect((init.headers as Record<string, string>).Authorization).toBe("Bearer acc");
+  expect(new Headers(init.headers).get("Authorization")).toBe("Bearer acc");
 });
 
 test("401 -> refresh -> retry once with the new token", async () => {
@@ -740,7 +785,7 @@ test("401 -> refresh -> retry once with the new token", async () => {
     if (u.endsWith("/auth/refresh")) {
       return jsonResponse({ access_token: "new", refresh_token: "ref2" });
     }
-    const auth = (init?.headers as Record<string, string>)?.Authorization;
+    const auth = new Headers(init?.headers).get("Authorization");
     return auth === "Bearer new" ? jsonResponse({ ok: true }) : jsonResponse({}, 401);
   });
   const res = await apiFetch("/messages/sent");
@@ -750,20 +795,48 @@ test("401 -> refresh -> retry once with the new token", async () => {
   expect(fetchMock).toHaveBeenCalledTimes(3);
 });
 
-test("concurrent 401s share ONE refresh", async () => {
+test("concurrent 401s share ONE refresh and both retry with the new token", async () => {
+  tokens.set({ access_token: "old", refresh_token: "ref" });
+  let refreshCalls = 0;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    const u = String(url);
+    if (u.endsWith("/auth/refresh")) {
+      refreshCalls += 1;
+      return jsonResponse({ access_token: "new", refresh_token: "ref2" });
+    }
+    const auth = new Headers(init?.headers).get("Authorization");
+    return auth === "Bearer new" ? jsonResponse({ ok: true }) : jsonResponse({}, 401);
+  });
+  const [a, b] = await Promise.all([
+    apiFetch("/messages/sent"),
+    apiFetch("/messages/inbox"),
+  ]);
+  expect(refreshCalls).toBe(1);
+  expect(a).toEqual({ ok: true });
+  expect(b).toEqual({ ok: true });
+  // 2 protected (401) + 1 shared refresh + 2 retries
+  expect(fetchMock).toHaveBeenCalledTimes(5);
+});
+
+test("retries without refreshing if the token already changed mid-flight", async () => {
   tokens.set({ access_token: "old", refresh_token: "ref" });
   let refreshCalls = 0;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
     const u = String(url);
     if (u.endsWith("/auth/refresh")) {
       refreshCalls += 1;
-      return jsonResponse({ access_token: "new", refresh_token: "ref2" });
+      return jsonResponse({ access_token: "x", refresh_token: "y" });
     }
-    const auth = (init?.headers as Record<string, string>)?.Authorization;
-    return auth === "Bearer new" ? jsonResponse({ ok: true }) : jsonResponse({}, 401);
+    const auth = new Headers(init?.headers).get("Authorization");
+    if (auth === "Bearer new") return jsonResponse({ ok: true });
+    // The first (old-token) request 401s; meanwhile "another request" rotated
+    // the token, so apiFetch should retry with the new one, not refresh again.
+    tokens.set({ access_token: "new", refresh_token: "ref2" });
+    return jsonResponse({}, 401);
   });
-  await Promise.all([apiFetch("/messages/sent"), apiFetch("/messages/inbox")]);
-  expect(refreshCalls).toBe(1);
+  const res = await apiFetch("/messages/sent");
+  expect(res).toEqual({ ok: true });
+  expect(refreshCalls).toBe(0);
 });
 
 test("refresh failure clears tokens and signals logout, no loop", async () => {
@@ -798,7 +871,10 @@ import { tokens } from "./tokens";
 const AUTH_PATHS = ["/auth/login", "/auth/register", "/auth/google", "/auth/refresh"];
 
 let logoutHandler: () => void = () => {};
-export function onLogout(fn: () => void) { logoutHandler = fn; }
+export function onLogout(fn: () => void): () => void {
+  logoutHandler = fn;
+  return () => { if (logoutHandler === fn) logoutHandler = () => {}; };
+}
 
 let refreshPromise: Promise<boolean> | null = null;
 
@@ -839,16 +915,23 @@ async function refresh(): Promise<boolean> {
 
 /** fetch + JSON, with one auth-refresh retry on 401 (except auth endpoints). */
 export async function apiFetch<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+  const accessUsed = tokens.access;
   let resp = await rawFetch(path, init);
   const isAuthPath = AUTH_PATHS.some((p) => path.startsWith(p));
   if (resp.status === 401 && !isAuthPath) {
-    const ok = await refresh();
-    if (!ok) {
-      tokens.clear();
-      logoutHandler();
-      throw new ApiError(401, await safeBody(resp));
+    if (tokens.access && tokens.access !== accessUsed) {
+      // Another in-flight request already refreshed — retry with the current
+      // token instead of starting a second (wasteful) refresh.
+      resp = await rawFetch(path, init);
+    } else {
+      const ok = await refresh();
+      if (!ok) {
+        tokens.clear();
+        logoutHandler();
+        throw new ApiError(401, await safeBody(resp));
+      }
+      resp = await rawFetch(path, init); // retry once with the new token
     }
-    resp = await rawFetch(path, init); // retry once with new token
   }
   if (!resp.ok) throw new ApiError(resp.status, await safeBody(resp));
   return resp.status === 204 ? (undefined as T) : ((await resp.json()) as T);
@@ -976,9 +1059,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   function goAnon() { setUser(null); setStatus("anonymous"); }
 
   useEffect(() => {
-    onLogout(() => { tokens.clear(); goAnon(); });
-    if (!tokens.access) { goAnon(); return; }
-    authApi.me().then(applyUser).catch(goAnon);
+    const unsubscribe = onLogout(() => { tokens.clear(); goAnon(); });
+    if (tokens.access) authApi.me().then(applyUser).catch(goAnon);
+    else goAnon();
+    return unsubscribe;
   }, []);
 
   const value: AuthValue = {
@@ -1020,11 +1104,18 @@ Update `frontend/src/App.test.tsx` (the shell no longer renders a bare "Pigeon P
 import { render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 import * as authApi from "./api/auth";
+import { tokens } from "./api/tokens";
 
-test("shows the logged-out shell when there is no session", async () => {
-  vi.spyOn(authApi, "me").mockRejectedValue(new Error("401"));
+beforeEach(() => localStorage.clear());
+
+test("a stale/invalid session falls back to the logged-out shell", async () => {
+  tokens.set({ access_token: "stale", refresh_token: "ref" });
+  const meSpy = vi.spyOn(authApi, "me").mockRejectedValue(new Error("401"));
   render(<App />);
-  await waitFor(() => expect(screen.getByText(/please log in/i)).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getByText(/please log in/i)).toBeInTheDocument()
+  );
+  expect(meSpy).toHaveBeenCalled(); // the failed-session path was exercised
 });
 ```
 
