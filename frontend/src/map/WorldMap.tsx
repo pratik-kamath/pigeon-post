@@ -30,27 +30,34 @@ export function WorldMap({ cities, messages, selectedId, onSelect }: Props) {
 
   const cityByName = useMemo(() => new Map(cities.map((c) => [c.name, c])), [cities]);
 
-  const tiles = useMemo(() => {
-    const cells: { c: number; r: number }[] = [];
-    for (let r = 0; r < GRID_ROWS; r++)
-      for (let c = 0; c < GRID_COLS; c++) if (isLand(c, r)) cells.push({ c, r });
-    return cells;
+  // Land drawn once as run-length <rect>s in an SVG (crisp via crispEdges,
+  // seam-free, far fewer nodes than per-cell tiles). Memoized so the dense grid
+  // never re-renders on animation frames.
+  const landRects = useMemo(() => {
+    const rects = [];
+    for (let r = 0; r < GRID_ROWS; r++) {
+      let c = 0;
+      while (c < GRID_COLS) {
+        if (!isLand(c, r)) { c++; continue; }
+        const start = c;
+        while (c < GRID_COLS && isLand(c, r)) c++;
+        rects.push(<rect key={`${r}-${start}`} x={start} y={r} width={c - start} height={1} />);
+      }
+    }
+    return rects;
   }, []);
 
   return (
     <div className="pk-map scanlines" role="region" aria-label="World map of pigeons in flight">
-      {tiles.map(({ c, r }) => (
-        <span
-          key={`${c}-${r}`}
-          className="tile"
-          style={{
-            left: `${(c / GRID_COLS) * 100}%`,
-            top: `${(r / GRID_ROWS) * 100}%`,
-            width: `${100 / GRID_COLS}%`,
-            height: `${100 / GRID_ROWS}%`,
-          }}
-        />
-      ))}
+      <svg
+        className="land"
+        viewBox={`0 0 ${GRID_COLS} ${GRID_ROWS}`}
+        preserveAspectRatio="none"
+        shapeRendering="crispEdges"
+        aria-hidden="true"
+      >
+        {landRects}
+      </svg>
       <svg className="flight-paths" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
         {messages.flatMap((m) => {
           if (m.status !== "in_flight") return [];

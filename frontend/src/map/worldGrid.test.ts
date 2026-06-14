@@ -1,20 +1,22 @@
 import { GRID_COLS, GRID_ROWS, isLand } from "./worldGrid";
 
-test("grid has sane dimensions", () => {
-  expect(GRID_COLS).toBeGreaterThan(20);
-  expect(GRID_ROWS).toBeGreaterThan(10);
+test("grid is the generated 120x60", () => {
+  expect(GRID_COLS).toBe(120);
+  expect(GRID_ROWS).toBe(60);
 });
 
-test("isLand returns a boolean and the poles/oceans are sea", () => {
+test("isLand returns a boolean and rejects out-of-bounds", () => {
   expect(typeof isLand(0, 0)).toBe("boolean");
-  // far south-pacific cell (bottom-left-ish) is ocean
-  expect(isLand(1, GRID_ROWS - 1)).toBe(false);
+  expect(isLand(-1, 0)).toBe(false);
+  expect(isLand(0, GRID_ROWS)).toBe(false);
+  expect(isLand(GRID_COLS, 0)).toBe(false);
 });
 
-test("there is some land and some sea", () => {
-  let land = 0, sea = 0;
+test("land coverage is realistic (continents + oceans)", () => {
+  let land = 0;
   for (let r = 0; r < GRID_ROWS; r++)
-    for (let c = 0; c < GRID_COLS; c++) if (isLand(c, r)) land++; else sea++;
-  expect(land).toBeGreaterThan(0);
-  expect(sea).toBeGreaterThan(0);
+    for (let c = 0; c < GRID_COLS; c++) if (isLand(c, r)) land++;
+  const frac = land / (GRID_COLS * GRID_ROWS);
+  expect(frac).toBeGreaterThan(0.2); // Earth is ~29% land (+Antarctica here)
+  expect(frac).toBeLessThan(0.45);
 });
