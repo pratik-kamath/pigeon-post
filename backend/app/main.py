@@ -1,7 +1,9 @@
+import os
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app import db, models  # noqa: F401  — models registers tables on Base.metadata
 from app.auth_routes import router as auth_router
@@ -46,6 +48,19 @@ def create_app(start_scheduler: bool = True, create_tables: bool = True) -> Fast
             scheduler.shutdown(wait=False)
 
     app = FastAPI(title="Pigeon Post API", lifespan=lifespan)
+
+    origins = [
+        o.strip()
+        for o in os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(",")
+        if o.strip()
+    ]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
 
     @app.get("/health")
     def health() -> dict[str, str]:
