@@ -5,8 +5,25 @@ import { project } from "./projection";
 import { pigeonPosition } from "./pigeon";
 import { flightSegments } from "./flightSegments";
 import { GRID_COLS, GRID_ROWS, isLand } from "./worldGrid";
-import { CityMarker } from "../components/CityMarker";
+import { CityMarker, type LabelPlacement } from "../components/CityMarker";
 import { PigeonSprite } from "../components/PigeonSprite";
+
+// Per-city label directions to keep dense clusters (W. Europe, US coasts,
+// SE Australia) and right-edge cities (Tokyo, Sydney) from overlapping.
+// Unlisted cities default to "right".
+const LABEL_PLACEMENT: Record<string, LabelPlacement> = {
+  london: "left",
+  amsterdam: "top",
+  paris: "bottom",
+  cairo: "bottom",
+  chicago: "left",
+  "san francisco": "left",
+  "los angeles": "bottom",
+  dubai: "top",
+  tokyo: "left",
+  sydney: "left",
+  melbourne: "bottom",
+};
 
 interface Props {
   cities: City[];
@@ -75,7 +92,15 @@ export function WorldMap({ cities, messages, selectedId, onSelect }: Props) {
       </svg>
       {cities.map((city) => {
         const p = project(city.lat, city.lon);
-        return <CityMarker key={city.name} name={city.name} xPct={p.x * 100} yPct={p.y * 100} />;
+        return (
+          <CityMarker
+            key={city.name}
+            name={city.name}
+            xPct={p.x * 100}
+            yPct={p.y * 100}
+            placement={LABEL_PLACEMENT[city.name] ?? "right"}
+          />
+        );
       })}
       {messages.map((m) => {
         const p = pigeonPosition(m, cityByName, now);

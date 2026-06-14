@@ -79,7 +79,11 @@ body {
 
 .city { position: absolute; transform: translate(-50%, -50%); pointer-events: none; }
 .city-dot { display: block; width: 6px; height: 6px; background: var(--city); border: 2px solid var(--ink); }
-.city-label { position: absolute; left: 8px; top: -2px; font-size: 12px; color: var(--ink); background: var(--paper); border: 1px solid var(--ink); padding: 0 2px; white-space: nowrap; }
+.city-label { position: absolute; font-size: 10px; line-height: 1.1; color: var(--ink); background: var(--paper); border: 1px solid var(--ink); padding: 0 2px; white-space: nowrap; }
+.city-label--right { left: 100%; top: 50%; transform: translateY(-50%); margin-left: 4px; }
+.city-label--left { right: 100%; top: 50%; transform: translateY(-50%); margin-right: 4px; }
+.city-label--top { bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 4px; }
+.city-label--bottom { top: 100%; left: 50%; transform: translateX(-50%); margin-top: 4px; }
 
 .pigeon { position: absolute; transform: translate(-50%, -50%); width: 14px; height: 14px; padding: 0; border: 2px solid var(--accent); background: var(--paper); cursor: pointer; clip-path: polygon(0 50%, 45% 0, 55% 0, 100% 50%, 55% 100%, 45% 100%); animation: pop 0.3s ease-out; }
 .pigeon--delivered { border-color: var(--land-edge); }
