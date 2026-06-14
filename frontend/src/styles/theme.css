@@ -81,7 +81,7 @@ body {
 .city-dot { display: block; width: 6px; height: 6px; background: var(--city); border: 2px solid var(--ink); }
 .city-label { position: absolute; left: 8px; top: -2px; font-size: 12px; color: var(--ink); background: var(--paper); border: 1px solid var(--ink); padding: 0 2px; white-space: nowrap; }
 
-.pigeon { position: absolute; transform: translate(-50%, -50%); width: 14px; height: 14px; padding: 0; border: 2px solid var(--accent); background: var(--paper); cursor: pointer; clip-path: polygon(0 50%, 45% 0, 55% 0, 100% 50%, 55% 100%, 45% 100%); }
+.pigeon { position: absolute; transform: translate(-50%, -50%); width: 14px; height: 14px; padding: 0; border: 2px solid var(--accent); background: var(--paper); cursor: pointer; clip-path: polygon(0 50%, 45% 0, 55% 0, 100% 50%, 55% 100%, 45% 100%); animation: pop 0.3s ease-out; }
 .pigeon--delivered { border-color: var(--land-edge); }
 .pigeon--lost { opacity: 0.45; border-color: var(--ink); }
 .pigeon--selected { outline: 2px solid var(--frame); outline-offset: 2px; animation: pop 0.3s ease-out, pulse 0.9s ease-in-out infinite; }
@@ -112,9 +112,9 @@ body {
 
 .google-btn { display: flex; justify-content: center; margin-top: 10px; min-height: 40px; }
 
-/* Launch flourish: every sprite pops in on first mount; in-flight/selected add more above. */
-.pigeon { animation: pop 0.3s ease-out; }
-/* A selected in-flight pigeon should pop + bob + pulse (combined class beats either single). */
+/* The base `.pigeon` `pop` lives on the early base rule (above) so the later
+   `--in_flight`/`--selected` modifiers win by source order; a selected in-flight
+   pigeon needs this combined rule (specificity 0,2,0) to get all three. */
 .pigeon--in_flight.pigeon--selected { animation: pop 0.3s ease-out, bob 1.2s ease-in-out infinite 0.3s, pulse 0.9s ease-in-out infinite; }
 .pigeon:hover { transform: translate(-50%, -50%) scale(1.35); z-index: 3; }
 @keyframes pop { from { transform: translate(-50%, -50%) scale(0); } to { transform: translate(-50%, -50%) scale(1); } }
