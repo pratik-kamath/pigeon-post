@@ -153,9 +153,10 @@ test("titleCaseCity capitalizes each word", () => {
   expect(titleCaseCity("tokyo")).toBe("Tokyo");
 });
 
-test("formatCountdown formats hours+minutes, minutes-only, and arrival", () => {
+test("formatCountdown formats hours+minutes, minutes-only, sub-minute, and arrival", () => {
   expect(formatCountdown(2 * 3600_000 + 5 * 60_000)).toBe("2h 5m");
   expect(formatCountdown(5 * 60_000)).toBe("5m");
+  expect(formatCountdown(30_000)).toBe("<1m");
   expect(formatCountdown(0)).toBe("arriving");
   expect(formatCountdown(-1000)).toBe("arriving");
 });
@@ -171,6 +172,7 @@ export function titleCaseCity(name: string): string {
 
 export function formatCountdown(ms: number): string {
   if (ms <= 0) return "arriving";
+  if (ms < 60_000) return "<1m";
   const totalMin = Math.floor(ms / 60_000);
   const h = Math.floor(totalMin / 60);
   const m = totalMin % 60;
@@ -301,6 +303,8 @@ function mockAuth(over: Partial<ReturnType<typeof useAuthMod.useAuth>> = {}) {
   });
 }
 
+beforeEach(() => vi.restoreAllMocks()); // isolate the useAuth spy between tests
+
 test("logs in with entered credentials", async () => {
   const login = vi.fn().mockResolvedValue(undefined);
   mockAuth({ login });
@@ -355,6 +359,10 @@ export function AuthScreen() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!email.trim() || !password.trim() || (mode === "register" && !username.trim())) {
+      setError("Please fill in all fields.");
+      return;
+    }
     setBusy(true);
     try {
       if (mode === "login") await login(email, password);
@@ -646,6 +654,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 import { renderHook } from "@testing-library/react";
 import { usePolling } from "./usePolling";
 
+afterEach(() => vi.useRealTimers()); // restore even if an assertion above throws
+
 test("calls immediately, then on each interval, and stops on unmount", () => {
   vi.useFakeTimers();
   const fn = vi.fn();
@@ -656,7 +666,20 @@ test("calls immediately, then on each interval, and stops on unmount", () => {
   unmount();
   vi.advanceTimersByTime(5000);
   expect(fn).toHaveBeenCalledTimes(3);      // stopped
-  vi.useRealTimers();
+});
+
+test("uses the latest fn without resetting the interval", () => {
+  vi.useFakeTimers();
+  const first = vi.fn();
+  const second = vi.fn();
+  const { rerender } = renderHook(({ fn }) => usePolling(fn, 1000), {
+    initialProps: { fn: first },
+  });
+  expect(first).toHaveBeenCalledTimes(1);
+  rerender({ fn: second });           // swapping fn must NOT restart the interval
+  vi.advanceTimersByTime(1000);
+  expect(second).toHaveBeenCalledTimes(1);
+  expect(first).toHaveBeenCalledTimes(1); // old fn no longer called
 });
 ```
 
@@ -670,10 +693,12 @@ import { useEffect, useRef } from "react";
  *  `fn` without resetting the timer when it changes. */
 export function usePolling(fn: () => void, intervalMs: number) {
   const saved = useRef(fn);
-  saved.current = fn;
+  // Update the ref in an effect, not during render (react-hooks/refs).
+  useEffect(() => { saved.current = fn; }, [fn]);
   useEffect(() => {
-    saved.current();
-    const id = setInterval(() => saved.current(), intervalMs);
+    const run = () => saved.current();
+    run();
+    const id = setInterval(run, intervalMs);
     return () => clearInterval(id);
   }, [intervalMs]);
 }
@@ -691,11 +716,67 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 8: WorldMap (tiles + markers + sprites + rAF tick)
+## Task 8: WorldMap (tiles + markers + sprites + flight paths + rAF tick)
 
-**Files:** Create `src/map/WorldMap.tsx`; Modify `src/styles/theme.css`; Test `src/map/WorldMap.test.tsx`.
+**Files:** Create `src/map/flightSegments.ts`, `src/map/WorldMap.tsx`; Modify `src/styles/theme.css`, `src/test/setup.ts`; Test `src/map/flightSegments.test.ts`, `src/map/WorldMap.test.tsx`.
 
-- [ ] **Step 1: Failing test** — `src/map/WorldMap.test.tsx`:
+- [ ] **Step 1: Stub `requestAnimationFrame`** — jsdom may not provide it and `WorldMap` calls it. Append to `frontend/src/test/setup.ts` (guarded, so a real impl wins):
+```ts
+if (!globalThis.requestAnimationFrame) {
+  globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) =>
+    setTimeout(() => cb(Date.now()), 16) as unknown as number) as typeof requestAnimationFrame;
+  globalThis.cancelAnimationFrame = ((id: number) =>
+    clearTimeout(id as unknown as ReturnType<typeof setTimeout>)) as typeof cancelAnimationFrame;
+}
+```
+
+- [ ] **Step 2: `flightSegments` failing test** — `src/map/flightSegments.test.ts`:
+```ts
+import { flightSegments } from "./flightSegments";
+
+test("a non-wrapping route is a single segment", () => {
+  const segs = flightSegments({ x: 0.2, y: 0.4 }, { x: 0.5, y: 0.6 });
+  expect(segs).toHaveLength(1);
+  expect(segs[0]).toEqual({ x1: 0.2, y1: 0.4, x2: 0.5, y2: 0.6 });
+});
+
+test("an antimeridian route splits into two seam-crossing segments", () => {
+  const segs = flightSegments({ x: 0.9, y: 0.3 }, { x: 0.1, y: 0.5 });
+  expect(segs).toHaveLength(2);
+  expect(segs[0].x2).toBe(1); // first exits the right edge
+  expect(segs[1].x1).toBe(0); // second enters from the left edge
+  expect(segs[0].y2).toBeCloseTo(segs[1].y1); // y continuous across the seam
+});
+```
+
+- [ ] **Step 3: Run, expect FAIL.** Then implement `src/map/flightSegments.ts`:
+```ts
+import type { Point } from "./projection";
+
+export interface Segment { x1: number; y1: number; x2: number; y2: number; }
+
+/** One or two line segments (normalized space) for the dotted path a→b, taking
+ *  the shorter direction and splitting across the antimeridian seam when it wraps. */
+export function flightSegments(a: Point, b: Point): Segment[] {
+  let dx = b.x - a.x;
+  if (dx > 0.5) dx -= 1;
+  else if (dx < -0.5) dx += 1;
+  const endX = a.x + dx;
+  if (endX >= 0 && endX <= 1) {
+    return [{ x1: a.x, y1: a.y, x2: b.x, y2: b.y }];
+  }
+  const edge = endX > 1 ? 1 : 0;
+  const tEdge = (edge - a.x) / dx;
+  const yEdge = a.y + (b.y - a.y) * tEdge;
+  return [
+    { x1: a.x, y1: a.y, x2: edge, y2: yEdge },
+    { x1: edge === 1 ? 0 : 1, y1: yEdge, x2: b.x, y2: b.y },
+  ];
+}
+```
+Run `flightSegments.test.ts`, expect PASS.
+
+- [ ] **Step 4: WorldMap failing test** — `src/map/WorldMap.test.tsx`:
 ```tsx
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -713,11 +794,14 @@ const messages: Message[] = [
     sent_at: "2026-06-14T00:00:00", arrival_at: "2999-01-01T00:00:00", resolved_at: null },
 ];
 
-test("renders a city marker per city and a sprite per resolvable pigeon", () => {
-  render(<WorldMap cities={cities} messages={messages} selectedId={null} onSelect={() => {}} />);
+test("renders city markers, a sprite, and a dotted flight path", () => {
+  const { container } = render(
+    <WorldMap cities={cities} messages={messages} selectedId={null} onSelect={() => {}} />
+  );
   expect(screen.getByText("New York")).toBeInTheDocument();
   expect(screen.getByText("Tokyo")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /pigeon to alex/i })).toBeInTheDocument();
+  expect(container.querySelectorAll(".flight-paths line").length).toBeGreaterThan(0);
 });
 
 test("clicking a pigeon selects it", async () => {
@@ -734,15 +818,14 @@ test("skips pigeons whose cities are unknown", () => {
 });
 ```
 
-- [ ] **Step 2: Run, expect FAIL.**
-
-- [ ] **Step 3: Implement** — `src/map/WorldMap.tsx`:
+- [ ] **Step 5: Run, expect FAIL.** Then implement `src/map/WorldMap.tsx`:
 ```tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { City } from "../api/cities";
 import type { Message } from "../api/messages";
 import { project } from "./projection";
 import { pigeonPosition } from "./pigeon";
+import { flightSegments } from "./flightSegments";
 import { GRID_COLS, GRID_ROWS, isLand } from "./worldGrid";
 import { CityMarker } from "../components/CityMarker";
 import { PigeonSprite } from "../components/PigeonSprite";
@@ -767,10 +850,7 @@ export function WorldMap({ cities, messages, selectedId, onSelect }: Props) {
     return () => cancelAnimationFrame(raf.current);
   }, [hasInFlight]);
 
-  const cityByName = useMemo(
-    () => new Map(cities.map((c) => [c.name, c])),
-    [cities]
-  );
+  const cityByName = useMemo(() => new Map(cities.map((c) => [c.name, c])), [cities]);
 
   const tiles = useMemo(() => {
     const cells: { c: number; r: number }[] = [];
@@ -780,7 +860,7 @@ export function WorldMap({ cities, messages, selectedId, onSelect }: Props) {
   }, []);
 
   return (
-    <div className="pk-map scanlines" role="img" aria-label="World map of pigeons in flight">
+    <div className="pk-map scanlines" role="region" aria-label="World map of pigeons in flight">
       {tiles.map(({ c, r }) => (
         <span
           key={`${c}-${r}`}
@@ -793,6 +873,21 @@ export function WorldMap({ cities, messages, selectedId, onSelect }: Props) {
           }}
         />
       ))}
+      <svg className="flight-paths" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        {messages.flatMap((m) => {
+          if (m.status !== "in_flight") return [];
+          const o = cityByName.get(m.origin);
+          const d = cityByName.get(m.destination);
+          if (!o || !d) return [];
+          return flightSegments(project(o.lat, o.lon), project(d.lat, d.lon)).map((s, i) => (
+            <line
+              key={`${m.id}-${i}`}
+              x1={s.x1 * 100} y1={s.y1 * 100} x2={s.x2 * 100} y2={s.y2 * 100}
+              stroke="var(--paper)" strokeWidth={0.5} strokeDasharray="1.5 1.5"
+            />
+          ));
+        })}
+      </svg>
       {cities.map((city) => {
         const p = project(city.lat, city.lon);
         return <CityMarker key={city.name} name={city.name} xPct={p.x * 100} yPct={p.y * 100} />;
@@ -819,15 +914,16 @@ Append to `src/styles/theme.css`:
 ```css
 .pk-map { position: relative; width: 100%; aspect-ratio: 2 / 1; background: var(--sea); border: 3px solid var(--ink); overflow: hidden; }
 .tile { position: absolute; background: var(--land); }
+.flight-paths { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 ```
-> Note: tiles are positioned by percentage so the map scales responsively while staying blocky. `aspect-ratio: 2/1` matches the equirectangular projection.
+> Tiles + paths are positioned by percentage so the map scales responsively while staying blocky. `aspect-ratio: 2/1` matches the equirectangular projection. The SVG uses `preserveAspectRatio="none"` so its `0..100` coordinate space stretches to the map box.
 
-- [ ] **Step 4: Run, expect PASS.** (jsdom doesn't run rAF, but the first render uses `now = Date.now()`, and the in-flight test uses a far-future `arrival_at` so the sprite sits near the origin and renders regardless.)
+- [ ] **Step 6: Run, expect PASS.** (jsdom now has the rAF stub from Step 1; the in-flight test uses a far-future `arrival_at` so the sprite sits near the origin and renders regardless of animation.)
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 ```bash
-git add frontend/src/map/WorldMap.tsx frontend/src/map/WorldMap.test.tsx frontend/src/styles/theme.css
-git commit -m "feat: WorldMap — tiles, city markers, animated pigeon sprites
+git add frontend/src/map/flightSegments.ts frontend/src/map/flightSegments.test.ts frontend/src/map/WorldMap.tsx frontend/src/map/WorldMap.test.tsx frontend/src/styles/theme.css frontend/src/test/setup.ts
+git commit -m "feat: WorldMap — tiles, markers, dotted flight paths, animated sprites
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -836,9 +932,48 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Task 9: SendDialog
 
-**Files:** Create `src/components/SendDialog.tsx`; Modify `src/styles/theme.css`; Test `src/components/SendDialog.test.tsx`.
+**Files:** Create `src/lib/errors.ts`, `src/components/SendDialog.tsx`; Modify `src/styles/theme.css`; Test `src/lib/errors.test.ts`, `src/components/SendDialog.test.tsx`.
 
-- [ ] **Step 1: Failing test** — `src/components/SendDialog.test.tsx`:
+- [ ] **Step 1: error helper** — `src/lib/errors.test.ts`:
+```ts
+import { ApiError } from "../api/client";
+import { errorMessage } from "./errors";
+
+test("string detail is returned", () => {
+  expect(errorMessage(new ApiError(404, { detail: "recipient not found" }), "fb")).toBe("recipient not found");
+});
+
+test("Pydantic array detail returns the first msg (never an object)", () => {
+  const err = new ApiError(422, { detail: [{ loc: ["body", "recipient"], msg: "must not be blank", type: "value_error" }] });
+  expect(errorMessage(err, "fb")).toBe("must not be blank");
+});
+
+test("anything else returns the fallback", () => {
+  expect(errorMessage(new Error("boom"), "fb")).toBe("fb");
+});
+```
+Run (FAIL), then create `src/lib/errors.ts`:
+```ts
+import { ApiError } from "../api/client";
+
+/** A user-facing string from a thrown API error. FastAPI/Pydantic 422s put an
+ *  ARRAY of objects in `detail`; route errors put a string. Never returns a
+ *  non-string (rendering one would crash React). */
+export function errorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError && err.body && typeof err.body === "object") {
+    const detail = (err.body as { detail?: unknown }).detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      const first = detail[0] as { msg?: unknown } | undefined;
+      if (first && typeof first.msg === "string") return first.msg;
+    }
+  }
+  return fallback;
+}
+```
+Run (PASS).
+
+- [ ] **Step 2: SendDialog failing test** — `src/components/SendDialog.test.tsx`:
 ```tsx
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -891,16 +1026,37 @@ test("surfaces an unknown-recipient 404", async () => {
   await userEvent.click(screen.getByRole("button", { name: /send/i }));
   await waitFor(() => expect(screen.getByText(/recipient not found/i)).toBeInTheDocument());
 });
+
+test("blocks an empty recipient before calling the API", async () => {
+  const spy = vi.spyOn(messagesApi, "sendMessage");
+  render(<SendDialog cities={cities} onClose={() => {}} onSent={() => {}} />);
+  await userEvent.selectOptions(screen.getByLabelText(/from/i), "new york");
+  await userEvent.selectOptions(screen.getByLabelText(/to/i), "tokyo");
+  await userEvent.type(screen.getByLabelText(/message/i), "hi");
+  await userEvent.click(screen.getByRole("button", { name: /send/i }));
+  expect(screen.getByText(/required/i)).toBeInTheDocument();
+  expect(spy).not.toHaveBeenCalled();
+});
+
+test("a 422 with array detail shows a message without crashing", async () => {
+  vi.spyOn(messagesApi, "sendMessage").mockRejectedValue(
+    new ApiError(422, { detail: [{ loc: ["body", "body"], msg: "must not be blank", type: "value_error" }] })
+  );
+  render(<SendDialog cities={cities} onClose={() => {}} onSent={() => {}} />);
+  await fill();
+  await userEvent.click(screen.getByRole("button", { name: /send/i }));
+  await waitFor(() => expect(screen.getByText(/must not be blank/i)).toBeInTheDocument());
+});
 ```
 
-- [ ] **Step 2: Run, expect FAIL.**
+- [ ] **Step 3: Run, expect FAIL.**
 
-- [ ] **Step 3: Implement** — `src/components/SendDialog.tsx`:
+- [ ] **Step 4: Implement** — `src/components/SendDialog.tsx`:
 ```tsx
 import { useState, type FormEvent } from "react";
 import type { City } from "../api/cities";
 import { sendMessage, type Message } from "../api/messages";
-import { ApiError } from "../api/client";
+import { errorMessage } from "../lib/errors";
 import { titleCaseCity } from "../lib/format";
 import { PixelButton } from "./PixelButton";
 
@@ -921,20 +1077,22 @@ export function SendDialog({ cities, onClose, onSent }: Props) {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!recipient.trim() || !body.trim()) {
+      setError("Recipient and message are required.");
+      return;
+    }
     if (!origin || !destination || origin === destination) {
       setError("Origin and destination must differ.");
       return;
     }
     setBusy(true);
     try {
-      const msg = await sendMessage({ recipient, origin, destination, body });
+      const msg = await sendMessage({ recipient: recipient.trim(), origin, destination, body });
       onSent(msg);
       onClose();
     } catch (err) {
-      const detail = err instanceof ApiError && err.body && typeof err.body === "object"
-        ? (err.body as { detail?: string }).detail
-        : undefined;
-      setError(detail ?? "Couldn't send the pigeon. Try again.");
+      // errorMessage safely stringifies even a Pydantic array `detail`.
+      setError(errorMessage(err, "Couldn't send the pigeon. Try again."));
     } finally {
       setBusy(false);
     }
@@ -982,12 +1140,12 @@ Append to `src/styles/theme.css`:
 .send-actions { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
 ```
 
-- [ ] **Step 4: Run, expect PASS.**
+- [ ] **Step 5: Run, expect PASS.**
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 ```bash
-git add frontend/src/components/SendDialog.tsx frontend/src/components/SendDialog.test.tsx frontend/src/styles/theme.css
-git commit -m "feat: SendDialog (validation, POST, error surfacing)
+git add frontend/src/lib/errors.ts frontend/src/lib/errors.test.ts frontend/src/components/SendDialog.tsx frontend/src/components/SendDialog.test.tsx frontend/src/styles/theme.css
+git commit -m "feat: SendDialog (validation, POST, safe error surfacing)
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -996,9 +1154,60 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Task 10: Dashboard — compose it all + wire into App
 
-**Files:** Create `src/screens/Dashboard.tsx`; Modify `src/App.tsx`, `src/styles/theme.css`; Test `src/screens/Dashboard.test.tsx`.
+**Files:** Create `src/lib/sentStore.ts`, `src/screens/Dashboard.tsx`; Modify `src/App.tsx`, `src/styles/theme.css`; Test `src/lib/sentStore.test.ts`, `src/screens/Dashboard.test.tsx`.
 
-- [ ] **Step 1: Failing test** — `src/screens/Dashboard.test.tsx`:
+- [ ] **Step 1: sent-message merge store** — `src/lib/sentStore.test.ts`:
+```ts
+import { mergeServer, withOptimistic } from "./sentStore";
+import type { Message } from "../api/messages";
+
+const m = (id: number): Message => ({
+  id, sender: "me", recipient: "x", body: "b", origin: "new york",
+  destination: "tokyo", distance_km: 1, status: "in_flight",
+  sent_at: "2026-06-14T00:00:00", arrival_at: "2999-01-01T00:00:00", resolved_at: null,
+});
+
+test("a poll that doesn't yet include an optimistic send keeps it visible", () => {
+  const { pending, all } = mergeServer([m(42)], [m(1)]);
+  expect(pending.map((x) => x.id)).toEqual([42]); // still pending
+  expect(all.map((x) => x.id)).toEqual([42, 1]);   // shown
+});
+
+test("once the server reports the id, it drops from pending and isn't duplicated", () => {
+  const { pending, all } = mergeServer([m(42)], [m(42), m(1)]);
+  expect(pending).toEqual([]);
+  expect(all.map((x) => x.id)).toEqual([42, 1]);
+});
+
+test("withOptimistic prepends and de-dupes by id", () => {
+  expect(withOptimistic([m(1)], m(42)).map((x) => x.id)).toEqual([42, 1]);
+  expect(withOptimistic([m(42), m(1)], m(42)).map((x) => x.id)).toEqual([42, 1]);
+});
+```
+Run (FAIL), then create `src/lib/sentStore.ts`:
+```ts
+import type { Message } from "../api/messages";
+
+/** Merge a server poll with locally-pending optimistic sends: the server is
+ *  authoritative for ids it returns; pending sends it hasn't reported yet stay
+ *  visible (so a poll that started before a send can't drop the new pigeon). */
+export function mergeServer(
+  pending: Message[],
+  server: Message[]
+): { pending: Message[]; all: Message[] } {
+  const ids = new Set(server.map((m) => m.id));
+  const stillPending = pending.filter((m) => !ids.has(m.id));
+  return { pending: stillPending, all: [...stillPending, ...server] };
+}
+
+/** Prepend a message, de-duped by id. */
+export function withOptimistic(current: Message[], m: Message): Message[] {
+  return [m, ...current.filter((x) => x.id !== m.id)];
+}
+```
+Run (PASS).
+
+- [ ] **Step 2: Dashboard failing test** — `src/screens/Dashboard.test.tsx`:
 ```tsx
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -1049,14 +1258,15 @@ test("SEND opens the dialog", async () => {
 });
 ```
 
-- [ ] **Step 2: Run, expect FAIL.**
+- [ ] **Step 3: Run, expect FAIL.**
 
-- [ ] **Step 3: Implement** — `src/screens/Dashboard.tsx`:
+- [ ] **Step 4: Implement** — `src/screens/Dashboard.tsx`:
 ```tsx
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../auth/useAuth";
 import { fetchCities, type City } from "../api/cities";
 import { listSent, type Message } from "../api/messages";
+import { mergeServer, withOptimistic } from "../lib/sentStore";
 import { usePolling } from "../lib/usePolling";
 import { WorldMap } from "../map/WorldMap";
 import { DialogueBox } from "../components/DialogueBox";
@@ -1079,9 +1289,22 @@ export function Dashboard() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
+  // Optimistic sends not yet returned by a poll (see sentStore): a poll that
+  // started before a send can't make the new pigeon vanish.
+  const pendingRef = useRef<Message[]>([]);
+
+  function applyPoll(server: Message[]) {
+    const { pending, all } = mergeServer(pendingRef.current, server);
+    pendingRef.current = pending;
+    setMessages(all);
+  }
+  function addOptimistic(m: Message) {
+    pendingRef.current = withOptimistic(pendingRef.current, m);
+    setMessages((prev) => withOptimistic(prev, m));
+  }
 
   useEffect(() => { fetchCities().then(setCities).catch(() => {}); }, []);
-  usePolling(() => { listSent().then(setMessages).catch(() => {}); }, 10_000);
+  usePolling(() => { listSent().then(applyPoll).catch(() => {}); }, 10_000);
 
   const selected = messages.find((m) => m.id === selectedId) ?? null;
 
@@ -1105,16 +1328,16 @@ export function Dashboard() {
         <SendDialog
           cities={cities}
           onClose={() => setSendOpen(false)}
-          onSent={(m) => setMessages((prev) => [m, ...prev.filter((x) => x.id !== m.id)])}
+          onSent={addOptimistic}
         />
       )}
     </div>
   );
 }
 ```
-> `onSent` inserts the created message immediately (optimistic), de-duped by id so the next poll reconciling the same pigeon doesn't double it.
+> `onSent` (`addOptimistic`) inserts the created message immediately and records it as pending; `mergeServer` keeps it visible until a poll reports it, then de-dupes — so it never flickers out even if a poll lands right after the send.
 
-- [ ] **Step 4: Wire into App** — in `src/App.tsx`, change the authenticated branch to render the Dashboard:
+- [ ] **Step 5: Wire into App** — in `src/App.tsx`, change the authenticated branch to render the Dashboard:
 ```tsx
 import { AuthProvider } from "./auth/AuthContext";
 import { useAuth } from "./auth/useAuth";
@@ -1150,13 +1373,13 @@ Append to `src/styles/theme.css`:
 @keyframes boot-in { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
 ```
 
-- [ ] **Step 5: Run** `npm test` (all green), `npm run lint`, `npm run build` (clean).
+- [ ] **Step 6: Run** `npm test` (all green), `npm run lint`, `npm run build` (clean).
 
-- [ ] **Step 6: Manual smoke (optional, needs backend)** — `cd backend && FAST_FORWARD=5000 CORS_ORIGINS=http://localhost:5173 .venv/bin/uvicorn app.main:app` and `cd frontend && npm run dev`; register, send a pigeon, watch it cross the map; reload to confirm it persists and keeps moving.
+- [ ] **Step 7: Manual smoke (optional, needs backend)** — `cd backend && FAST_FORWARD=5000 CORS_ORIGINS=http://localhost:5173 .venv/bin/uvicorn app.main:app` and `cd frontend && npm run dev`; register, send a pigeon, watch it cross the map; reload to confirm it persists and keeps moving.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 ```bash
-git add frontend/src/screens/Dashboard.tsx frontend/src/screens/Dashboard.test.tsx frontend/src/App.tsx frontend/src/styles/theme.css
+git add frontend/src/lib/sentStore.ts frontend/src/lib/sentStore.test.ts frontend/src/screens/Dashboard.tsx frontend/src/screens/Dashboard.test.tsx frontend/src/App.tsx frontend/src/styles/theme.css
 git commit -m "feat: Dashboard — live map, status dialogue, send (Phase 2 payoff)
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
