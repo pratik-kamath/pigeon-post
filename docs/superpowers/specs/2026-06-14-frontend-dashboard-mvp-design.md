@@ -56,6 +56,18 @@ Reusable classes/components:
 - Screen wrapper — `--screen` bezel; optional scanline overlay (`repeating-linear-gradient`), `pointer-events:none`.
 - Global `image-rendering: pixelated` where sprites/tiles scale.
 
+### Visual craft (frontend-design principles)
+
+The build commits fully to the pixel-RPG aesthetic rather than a generic UI, applying the frontend-design skill within the chosen direction:
+
+- **Typography:** distinctive pixel faces only — Press Start 2P (display/headings/buttons/labels) + VT323 (dialogue/body). No system/Inter/Roboto fonts.
+- **Atmosphere & depth:** the screen is not a flat fill — CRT **scanlines**, a soft inner **vignette**, and a faint outer **glow** over the dark "device-off" backdrop give a powered-on CRT feel; the map carries subtle tile texture and coastline outlines.
+- **Motion (mostly Phase 2/3):** a **2-frame wing-flap** pigeon sprite; pigeons **glide** along their paths (rAF) with a gentle bob; a **power-on boot reveal** on load (bezel → map fades in → dialogue box slides up, staggered via `animation-delay`); a **launch** flourish when a pigeon is sent; **arrived / lost** micro-effects; hover/select pulses on city markers and the selected pigeon.
+- **Composition:** map-dominant with the classic bottom dialogue box and a top-right SEND menu button; pixel-perfect bezel framing; restrained, intentional layout.
+- **Accessibility:** honor `prefers-reduced-motion` (disable flap/bob/boot); keep dialogue text legible (VT323 at a readable size, strong contrast on the white boxes).
+
+Phase 1's theme establishes palette, fonts, and the CRT atmosphere primitive; motion and composition land in Phases 2–3.
+
 ### Backend additions (small, needed by the frontend)
 
 1. **CORS** — in `backend/app/main.py` `create_app()`, add `CORSMiddleware`. Parse `CORS_ORIGINS` (comma-separated) at app-creation time, stripping blanks, default `http://localhost:5173`. Allow methods `GET, POST, OPTIONS` and headers `Authorization, Content-Type`; `allow_credentials=False` (we send a Bearer header, not cookies — so origins are specific, never `*`). Without CORS the browser blocks all API calls.

@@ -392,7 +392,25 @@ body {
   background: repeating-linear-gradient(transparent 0 2px, rgba(0,0,0,.06) 2px 3px);
   pointer-events: none;
 }
+
+/* CRT atmosphere primitive (used by the dashboard screen in Phase 2):
+   soft outer glow + inner vignette so it reads as a powered-on screen. */
+.pk-screen {
+  position: relative;
+  background: var(--screen);
+  border: 5px solid var(--ink);
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: 0 0 24px rgba(90, 169, 230, 0.25), inset 0 0 40px rgba(0, 0, 0, 0.45);
+}
+
+/* Accessibility: Phase 2/3 motion (flap, bob, boot reveal) opts out here. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
 ```
+
+> Per the spec's **Visual craft (frontend-design principles)** section, the theme commits to the pixel-RPG look — distinctive pixel fonts, the GBC/FireRed palette, and CRT atmosphere (scanlines + glow + vignette). Motion and composition are applied in Phases 2–3.
 
 - [ ] **Step 4: Components** — create `frontend/src/components/PixelButton.tsx`:
 
