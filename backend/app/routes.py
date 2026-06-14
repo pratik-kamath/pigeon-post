@@ -28,6 +28,9 @@ def send_message(
         )
     ).scalar_one_or_none()
     if recipient is None:
+        # 404 is intentional: you address a pigeon by a username you already
+        # know, and /auth/register already reveals handle availability, so this
+        # isn't a new enumeration vector — a clear message beats hiding a typo.
         raise HTTPException(status_code=404, detail="recipient not found")
     if recipient.id == current_user.id:
         raise HTTPException(
@@ -43,9 +46,13 @@ def send_message(
         logger.error("rejecting send: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    # Assign the party relationships we already hold (current_user from the
+    # token, recipient from the lookup) so MessageOut resolves usernames with
+    # no extra query or lazy load — consistent with the eager-loaded readers.
+    # SQLAlchemy populates sender_id/recipient_id from these on flush.
     message = models.Message(
-        sender_id=current_user.id,
-        recipient_id=recipient.id,
+        sender_user=current_user,
+        recipient_user=recipient,
         body=payload.body,
         origin=payload.origin,
         destination=payload.destination,
@@ -56,7 +63,6 @@ def send_message(
     )
     db.add(message)
     db.commit()
-    db.refresh(message)
     return message
 
 
