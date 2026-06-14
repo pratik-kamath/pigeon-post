@@ -5,3 +5,5 @@ apscheduler<4
 pyjwt
 argon2-cffi
 email-validator
+google-auth
+requests
