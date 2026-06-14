@@ -58,17 +58,17 @@ Reusable classes/components:
 
 ### Backend additions (small, needed by the frontend)
 
-1. **CORS** — in `backend/app/main.py` `create_app()`, add `CORSMiddleware`. Allowed origins come from an env var `CORS_ORIGINS` (comma-separated; default `http://localhost:5173`). Only `Authorization`/`Content-Type` headers and the methods we use are needed; `allow_credentials=False` (we send a Bearer header, not cookies). Without CORS the browser blocks all API calls.
-2. **`GET /cities`** (public, no auth) — returns the catalog as `[{name, lat, lon}]`, sorted by name. New `CityOut` schema; route reads `app.cities.CITIES`. The map needs coords to project city markers and each pigeon's origin/destination; the Send form needs the dropdown list. Exposing it once avoids duplicating the catalog in the frontend.
+1. **CORS** — in `backend/app/main.py` `create_app()`, add `CORSMiddleware`. Parse `CORS_ORIGINS` (comma-separated) at app-creation time, stripping blanks, default `http://localhost:5173`. Allow methods `GET, POST, OPTIONS` and headers `Authorization, Content-Type`; `allow_credentials=False` (we send a Bearer header, not cookies — so origins are specific, never `*`). Without CORS the browser blocks all API calls.
+2. **`GET /cities`** (public, no auth) — returns the catalog as `[{name, lat, lon}]` sorted by name, using the **lowercase** catalog names (matching `cities.py` and what `MessageOut.origin/destination` carry, so lookups are exact); the frontend Title-cases for display. New `CityOut` schema; route reads `app.cities.CITIES`. The map needs coords to project city markers and each pigeon's origin/destination; the Send form needs the dropdown list. Exposing it once avoids duplicating the catalog in the frontend (and it's not sensitive — the catalog already appears in validation errors).
 
 Both get backend tests (the project's TDD norm): `GET /cities` returns all 20 cities with coords; a preflight/simple request reflects the configured CORS origin.
 
 ### Auth & API client
 
-- `api/client.ts`: a `request()` wrapper over `fetch` using `import.meta.env.VITE_API_BASE_URL`. Attaches `Authorization: Bearer <access>` when present. On `401`, it calls `POST /auth/refresh` **once** with the stored refresh token, persists the rotated pair, and retries the original request; if refresh fails, it clears tokens and signals logout. (Refresh tokens rotate server-side; we always store the newest.)
+- `api/client.ts`: a `request()` wrapper over `fetch` using `import.meta.env.VITE_API_BASE_URL`. Attaches `Authorization: Bearer <access>` when present. On `401` it refreshes via a **single shared `refreshPromise` mutex**: the first 401 starts one `POST /auth/refresh`; any concurrent 401s `await` that same promise instead of each submitting the (rotating) refresh token. After it resolves, each caller retries its original request **once** with the new access token, persisting the rotated pair. Refresh is **skipped for the auth endpoints** (`/auth/login`, `/auth/register`, `/auth/google`, `/auth/refresh`) — a 401 there is bad credentials, not an expired access token. If refresh fails, clear tokens and signal logout; never loop. (Why the mutex: the backend rotates refresh tokens and treats replay of a rotated token as theft, revoking the whole token family — two parallel refreshes with the same token would log the user out.)
 - Token storage: `localStorage` keys `pp_access` / `pp_refresh`. **Security caveat:** localStorage is XSS-readable; acceptable for this dev learning app, with httpOnly-cookie storage noted as future hardening.
 - `auth/AuthContext.tsx`: holds `user` (from `GET /auth/me`) + auth status; exposes `login(email,pw)`, `register(username,email,pw)`, `loginWithGoogle(idToken)`, `logout()`. Each auth call stores the returned token pair then loads `/auth/me`.
-- Google: load the Google Identity Services script; configure with `VITE_GOOGLE_CLIENT_ID`; on the credential callback, call `loginWithGoogle(credential)` → `POST /auth/google {id_token}`. If `VITE_GOOGLE_CLIENT_ID` is unset, hide the Google button (password auth still works).
+- Google: load the Google Identity Services script; configure with `VITE_GOOGLE_CLIENT_ID`; on the credential callback, call `loginWithGoogle(credential)` → `POST /auth/google {id_token}`. If `VITE_GOOGLE_CLIENT_ID` is unset, hide the Google button (password auth still works). **Operational note:** the Google OAuth *web* client must list the frontend origin (`http://localhost:5173` in dev, plus any deployed origin) under **Authorized JavaScript origins**, or GIS won't render / return a credential.
 - `App.tsx`: auth gate — no valid session → `LoginScreen` (with a link to `RegisterScreen`); authenticated → `Dashboard`.
 
 ### Screens
@@ -80,23 +80,34 @@ Both get backend tests (the project's TDD norm): `GET /cities` returns all 20 ci
 
 - `map/worldGrid.ts` — a compact hardcoded land/water bitmap (~120×60 booleans) plus a helper to produce render cells. Rendered once into pixel tiles (sea vs land colors) inside the map box.
 - `map/projection.ts` (pure) — `project(lat, lon) -> {x, y}` in **normalized** `[0,1]` space via equirectangular mapping: `x = (lon + 180)/360`, `y = (90 − lat)/180`. The map component multiplies by its pixel size. Resolution-independent → easy to unit-test against known cities.
-- `map/flight.ts` (pure) — `progress(sentAt, arrivalAt, now) -> number` = `clamp((now−sentAt)/(arrivalAt−sentAt), 0, 1)`; `interpolate(a, b, t) -> {x,y}` linear in normalized space. Used for the sprite position and the dotted path.
-- `WorldMap.tsx` — renders the tile grid, `CityMarker`s (projected, with small labels), and a `PigeonSprite` per sent pigeon. A `requestAnimationFrame` loop recomputes in-flight sprite positions from timestamps each frame (smooth motion without polling); `delivered` rest at the destination; `lost` render as a faded ✗ at their last position.
+- `lib/time.ts` (pure) — `parseServerUtc(s) -> Date`: the backend emits **naive UTC** ISO strings (no offset), which JS would otherwise parse as *local* time; this appends `Z` when no offset/`Z` is present so they're read as UTC. All server datetimes go through it.
+- `map/flight.ts` (pure) — `progress(sentAt, arrivalAt, now) -> number` = `clamp((now−sentAt)/(arrivalAt−sentAt), 0, 1)`; `interpolate(a, b, t) -> {x,y}` linear in normalized space, with **longitudinal wrap**: if the endpoints are more than half the map apart in x, it interpolates the short way around the antimeridian (so Tokyo→San Francisco crosses the Pacific seam, not the whole map). Used for the sprite position and the dotted path.
+- `WorldMap.tsx` — renders the tile grid, `CityMarker`s (projected, with small labels), and a `PigeonSprite` per sent pigeon. A `requestAnimationFrame` loop recomputes in-flight sprite positions from timestamps each frame (smooth motion without polling). States: `in_flight` animate along the (wrapped) path; `delivered` rest at the destination; `lost` render as a faded ✗ **at the destination** — the backend only knows a pigeon was lost at journey's end (it stores `resolved_at`, not a failure coordinate), so we don't invent a midpoint. A path crossing the antimeridian is drawn as two wrapped segments.
 - Data: `lib/usePolling.ts` calls `GET /messages/sent` every ~10 s (plus once on mount) to pick up status changes and newly sent pigeons; `GET /cities` is fetched once and cached to resolve origin/destination names → coords.
 - Interaction: clicking a `PigeonSprite` selects it → the bottom `DialogueBox` shows `#id → RECIPIENT @ DESTINATION · {Nh Mm to arrival | delivered | lost}`. Default/empty state: "No pigeons aloft. Press SEND to launch one!"
-- **SendDialog** (`components/SendDialog.tsx`) — opened by the top-right SEND PixelButton. Fields: recipient username; origin + destination dropdowns (from `/cities`, client-side guard that they differ); body textarea. Submits `POST /messages`; on success closes and the new pigeon appears on the next render/poll. Surfaces server errors: 404 "recipient not found", 422 self-send / same city / blank body, 401 (re-auth).
+- **SendDialog** (`components/SendDialog.tsx`) — opened by the top-right SEND PixelButton. Fields: recipient username; origin + destination dropdowns (from `/cities`, client-side guard that they differ); body textarea. Submits `POST /messages`; on success it **inserts the returned message into the dashboard's pigeon list immediately** (optimistic — the pigeon shows at once, not up to 10 s later) and closes; the next poll reconciles. Surfaces server errors: 404 "recipient not found", 422 self-send / same city / blank body, 401 (re-auth).
 
 ### Data flow summary
 
 `AuthContext` (tokens) → `client.ts` (auth + refresh) → `Dashboard` polls `/messages/sent` + reads cached `/cities` → `WorldMap` projects + animates via `projection`/`flight` → user clicks a pigeon (dialogue box) or SEND (`POST /messages`).
 
+### Build order (phasing within the plan)
+
+The plan sequences tasks so the core payoff lands before the extra auth variant (per reviewer guidance), keeping each stage shippable:
+
+1. Backend CORS + `GET /cities`; Vite/React/TS scaffold; theme/visual system; the API client (with the refresh mutex).
+2. Password auth (login/register) + the Dashboard + map engine + Send — the "send a pigeon and watch it fly" payoff, end-to-end.
+3. Google sign-in button; the Playwright smoke; visual polish.
+
+Google is still in this milestone — just built after the map works, so there's a working app at each step.
+
 ### Testing (Vitest + React Testing Library, jsdom; TDD)
 
-- **Pure units (highest value):** `projection` (e.g. lon 0/lat 0 → {0.5, 0.5}; a known city → expected normalized point); `flight` (`progress` at t=sent → 0, midpoint → 0.5, past arrival → clamped 1; `interpolate` midpoint).
-- **API client:** request attaches bearer; `401` → refresh → retry returns the retried result; refresh failure → tokens cleared + logout signaled (mocked `fetch`).
+- **Pure units (highest value):** `projection` (e.g. lon 0/lat 0 → {0.5, 0.5}; a known city → expected normalized point); `parseServerUtc` (a timezone-less server string is read as UTC, not local); `flight` (`progress` at t=sent → 0, midpoint → 0.5, past arrival → clamped 1; `interpolate` midpoint; an **antimeridian pair (Tokyo↔San Francisco) takes the short, wrapped path**).
+- **API client:** request attaches bearer; `401` → refresh → retry returns the retried result; **concurrent 401s share one refresh** (only one `/auth/refresh` call) and both retry; refresh failure → tokens cleared + logout signaled with **no retry loop**; auth endpoints skip the refresh path (mocked `fetch`).
 - **Components:** LoginScreen submit calls auth with field values + shows error on rejected login; Dashboard renders one sprite per pigeon from mocked `/messages/sent` + `/cities`, and clicking a sprite populates the DialogueBox; SendDialog blocks same origin/destination and POSTs valid input.
 - **Backend:** `GET /cities` returns 20 cities with coords; CORS configured-origin is reflected.
-- Optional: a Playwright/manual smoke against the running app + backend (not required to complete the milestone; the automated tests are the source of truth).
+- **Playwright e2e smoke** (a pixel map can render blank/clipped while unit tests stay green): with a mocked session, the dashboard loads, the map is visible, at least one pigeon sprite renders, and the Send dialog opens — checked at a desktop and a mobile viewport.
 
 ### Config & docs
 
@@ -108,7 +119,7 @@ Both get backend tests (the project's TDD norm): `GET /cities` returns all 20 ci
 ## Risks / notes
 
 - **Scope:** this is the largest single milestone so far (auth ×3, a custom map engine, send, and two backend additions). The implementation plan will decompose it into small TDD tasks; the visual polish is bounded by the agreed style.
-- **Great-circle vs straight path:** the backend distance is great-circle, but the map draws a straight dotted line between projected endpoints. Acceptable and intentional for the pixel aesthetic; a curved path is possible future polish.
+- **Great-circle vs straight path:** the backend distance is great-circle, but the map draws a straight dotted line between projected endpoints (taking the shorter, antimeridian-wrapped direction). Acceptable and intentional for the pixel aesthetic; a curved path is possible future polish.
 - **Animation vs polling:** position is computed continuously client-side from timestamps (rAF); polling only reconciles status/new pigeons, so motion stays smooth and API load stays low.
 - **Security caveat:** `localStorage` tokens are XSS-readable; chosen for simplicity in a dev learning app, with httpOnly-cookie storage as future hardening. CORS is locked to the configured dev origin, not `*`.
-- **Clock skew:** progress uses the client clock against server UTC timestamps; small skew only shifts a pigeon slightly along its path — acceptable.
+- **Timestamps:** the backend emits naive UTC; the frontend parses via `parseServerUtc` (appends `Z`) so progress isn't shifted by the viewer's timezone. Clock skew uses the client clock against server UTC; small skew only nudges a pigeon slightly along its path — acceptable.
