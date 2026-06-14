@@ -651,7 +651,9 @@ test("progress clamps to [0,1]", () => {
 test("interpolate midpoint of two near points", () => {
   const a = { x: 0.2, y: 0.4 };
   const b = { x: 0.4, y: 0.6 };
-  expect(interpolate(a, b, 0.5)).toEqual({ x: 0.3, y: 0.5 });
+  const mid = interpolate(a, b, 0.5);
+  expect(mid.x).toBeCloseTo(0.3); // floating-point: 0.30000000000000004
+  expect(mid.y).toBeCloseTo(0.5);
 });
 
 test("antimeridian pair takes the short wrapped path (Tokyo -> San Francisco)", () => {
