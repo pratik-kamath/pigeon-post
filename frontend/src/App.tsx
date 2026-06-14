@@ -1,12 +1,13 @@
 import { AuthProvider } from "./auth/AuthContext";
 import { useAuth } from "./auth/useAuth";
 import { AuthScreen } from "./screens/AuthScreen";
+import { Dashboard } from "./screens/Dashboard";
 
 function Shell() {
-  const { status, user } = useAuth();
+  const { status } = useAuth();
   if (status === "loading") return <div>Loading…</div>;
   if (status === "anonymous") return <AuthScreen />;
-  return <div>Welcome, {user!.username}</div>;
+  return <Dashboard />;
 }
 
 export default function App() {
