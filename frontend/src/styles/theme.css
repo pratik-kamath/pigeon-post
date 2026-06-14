@@ -84,9 +84,9 @@ body {
 .pigeon { position: absolute; transform: translate(-50%, -50%); width: 14px; height: 14px; padding: 0; border: 2px solid var(--accent); background: var(--paper); cursor: pointer; clip-path: polygon(0 50%, 45% 0, 55% 0, 100% 50%, 55% 100%, 45% 100%); }
 .pigeon--delivered { border-color: var(--land-edge); }
 .pigeon--lost { opacity: 0.45; border-color: var(--ink); }
-.pigeon--selected { outline: 2px solid var(--frame); outline-offset: 2px; }
+.pigeon--selected { outline: 2px solid var(--frame); outline-offset: 2px; animation: pop 0.3s ease-out, pulse 0.9s ease-in-out infinite; }
 .pigeon-wing { position: absolute; inset: 3px 4px; background: var(--accent); animation: flap 0.4s steps(2) infinite; }
-.pigeon--in_flight { animation: bob 1.2s ease-in-out infinite; }
+.pigeon--in_flight { animation: pop 0.3s ease-out, bob 1.2s ease-in-out infinite 0.3s; }
 @keyframes flap { from { transform: scaleY(1); } to { transform: scaleY(0.4); } }
 @keyframes bob { 0%,100% { margin-top: 0; } 50% { margin-top: -2px; } }
 
@@ -111,3 +111,11 @@ body {
 @keyframes boot-in { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
 
 .google-btn { display: flex; justify-content: center; margin-top: 10px; min-height: 40px; }
+
+/* Launch flourish: every sprite pops in on first mount; in-flight/selected add more above. */
+.pigeon { animation: pop 0.3s ease-out; }
+/* A selected in-flight pigeon should pop + bob + pulse (combined class beats either single). */
+.pigeon--in_flight.pigeon--selected { animation: pop 0.3s ease-out, bob 1.2s ease-in-out infinite 0.3s, pulse 0.9s ease-in-out infinite; }
+.pigeon:hover { transform: translate(-50%, -50%) scale(1.35); z-index: 3; }
+@keyframes pop { from { transform: translate(-50%, -50%) scale(0); } to { transform: translate(-50%, -50%) scale(1); } }
+@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(85, 102, 196, 0.6); } 50% { box-shadow: 0 0 0 4px rgba(85, 102, 196, 0); } }

@@ -10,17 +10,19 @@ import { SendDialog } from "../components/SendDialog";
 import { PixelButton } from "../components/PixelButton";
 import { titleCaseCity, formatCountdown } from "../lib/format";
 import { parseServerUtc } from "../lib/time";
+import { useClock } from "../lib/useClock";
 
-function statusLine(m: Message): string {
+function statusLine(m: Message, now: number): string {
   const to = `#${m.id} → ${m.recipient} @ ${titleCaseCity(m.destination)}`;
   if (m.status === "delivered") return `${to} · delivered ✓`;
   if (m.status === "lost") return `${to} · lost ✗`;
-  const left = parseServerUtc(m.arrival_at).getTime() - Date.now();
+  const left = parseServerUtc(m.arrival_at).getTime() - now;
   return `${to} · ${formatCountdown(left)} to arrival`;
 }
 
 export function Dashboard() {
   const { user, logout } = useAuth();
+  const now = useClock(15_000);
   const [cities, setCities] = useState<City[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -55,7 +57,7 @@ export function Dashboard() {
         </div>
         <WorldMap cities={cities} messages={messages} selectedId={selectedId} onSelect={setSelectedId} />
         <DialogueBox>
-          {selected ? statusLine(selected)
+          {selected ? statusLine(selected, now)
             : messages.length === 0 ? "No pigeons aloft. Press SEND to launch one!"
             : "▸ Tap a pigeon to track it."}
         </DialogueBox>
