@@ -21,6 +21,10 @@ class GoogleVerifyUnavailable(Exception):
     """Couldn't reach Google to fetch certs / verify (transient transport error)."""
 
 
+class GoogleNotConfigured(Exception):
+    """GOOGLE_CLIENT_ID is not set — server misconfiguration, not a bad token."""
+
+
 @dataclass(frozen=True)
 class GoogleIdentity:
     sub: str
@@ -31,7 +35,7 @@ class GoogleIdentity:
 
 def verify_google_id_token(token: str) -> GoogleIdentity:
     if not GOOGLE_CLIENT_ID:
-        raise RuntimeError("GOOGLE_CLIENT_ID is not configured")
+        raise GoogleNotConfigured("GOOGLE_CLIENT_ID is not configured")
     try:
         claims = google_id_token.verify_oauth2_token(
             token, _transport, GOOGLE_CLIENT_ID

@@ -4,6 +4,7 @@ from google.auth import exceptions as google_exceptions
 from app import google_auth
 from app.google_auth import (
     GoogleIdentity,
+    GoogleNotConfigured,
     GoogleVerifyUnavailable,
     InvalidGoogleToken,
     verify_google_id_token,
@@ -50,10 +51,10 @@ def test_returns_identity_and_lowercases_email(monkeypatch):
     )
 
 
-def test_missing_client_id_raises_runtime_error(monkeypatch):
+def test_missing_client_id_raises_not_configured(monkeypatch):
     monkeypatch.setattr(google_auth, "GOOGLE_CLIENT_ID", "")
     _patch_verify(monkeypatch, result=_claims())
-    with pytest.raises(RuntimeError):
+    with pytest.raises(GoogleNotConfigured):
         verify_google_id_token("tok")
 
 

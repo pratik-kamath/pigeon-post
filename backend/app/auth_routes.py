@@ -11,6 +11,8 @@ from app import models, security
 from app.db import get_db
 from app.delivery import utcnow
 from app.google_auth import (
+    GoogleIdentity,
+    GoogleNotConfigured,
     GoogleVerifyUnavailable,
     InvalidGoogleToken,
     verify_google_id_token,
@@ -55,7 +57,7 @@ def _generate_username(db: Session, email: str, name: str | None) -> str:
     return candidate
 
 
-def _resolve_google_user(db: Session, identity) -> models.User:
+def _resolve_google_user(db: Session, identity: GoogleIdentity) -> models.User:
     """Find by google_sub, else link by verified email, else create."""
     user = db.execute(
         select(models.User).where(models.User.google_sub == identity.sub)
@@ -178,7 +180,7 @@ def google_login(
         raise HTTPException(
             status_code=503, detail="google verification unavailable"
         ) from exc
-    except RuntimeError as exc:
+    except GoogleNotConfigured as exc:
         raise HTTPException(
             status_code=500, detail="google login not configured"
         ) from exc
@@ -191,7 +193,9 @@ def google_login(
     except IntegrityError:
         # Rare concurrent race (same sub created, or username taken between
         # generation and insert). Re-resolve by the stable sub; if still
-        # nothing, give up with a clear conflict.
+        # nothing, give up with a clear conflict. NOTE: an in-flight *link*
+        # mutation is discarded by the rollback — the password account stays
+        # unlinked until the user's next Google login, which is acceptable.
         db.rollback()
         user = db.execute(
             select(models.User).where(models.User.google_sub == identity.sub)

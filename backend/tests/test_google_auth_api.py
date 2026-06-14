@@ -1,5 +1,5 @@
 from app import auth_routes
-from app.google_auth import GoogleIdentity, GoogleVerifyUnavailable, InvalidGoogleToken
+from app.google_auth import GoogleIdentity, GoogleNotConfigured, GoogleVerifyUnavailable, InvalidGoogleToken
 from app.models import User
 
 
@@ -92,12 +92,16 @@ def test_unavailable_503(client, monkeypatch):
 
 
 def test_missing_config_500(client, monkeypatch):
-    patch_raises(monkeypatch, RuntimeError("GOOGLE_CLIENT_ID is not configured"))
+    patch_raises(monkeypatch, GoogleNotConfigured("missing"))
     assert google_login(client).status_code == 500
 
 
 def test_blank_id_token_422(client):
     assert client.post("/auth/google", json={"id_token": ""}).status_code == 422
+
+
+def test_missing_id_token_key_422(client):
+    assert client.post("/auth/google", json={}).status_code == 422
 
 
 def test_username_collision_distinct_handles(client, monkeypatch, db_session):
