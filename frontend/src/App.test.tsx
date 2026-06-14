@@ -10,7 +10,7 @@ test("a stale/invalid session falls back to the logged-out shell", async () => {
   const meSpy = vi.spyOn(authApi, "me").mockRejectedValue(new Error("401"));
   render(<App />);
   await waitFor(() =>
-    expect(screen.getByText(/please log in/i)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /log in/i })).toBeInTheDocument()
   );
   expect(meSpy).toHaveBeenCalled(); // the failed-session path was exercised
 });

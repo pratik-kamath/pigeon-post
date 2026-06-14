@@ -67,3 +67,12 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+.auth-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.auth-card { width: min(360px, 92vw); }
+.auth-title { font-family: var(--font-head); font-size: 16px; color: var(--paper); text-align: center; letter-spacing: 2px; margin: 4px 0 12px; text-shadow: 2px 2px 0 var(--ink); }
+.auth-form { display: flex; flex-direction: column; gap: 10px; }
+.auth-form label { display: flex; flex-direction: column; gap: 4px; font-size: 18px; }
+.auth-form input { font-family: var(--font-body); font-size: 18px; padding: 6px 8px; border: 2px solid var(--ink); background: #fff; }
+.auth-error { color: var(--accent); font-size: 16px; margin: 0; }
+.auth-toggle { background: none; border: none; color: var(--paper); font-family: var(--font-body); font-size: 16px; margin-top: 10px; cursor: pointer; text-decoration: underline; width: 100%; }
